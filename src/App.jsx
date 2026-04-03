@@ -167,17 +167,14 @@ function StoreModal({ store, appSettings, onSave, onClose, onLog }) {
         <div style={lbl}>Store Domain</div>
         <input style={inp} value={shopify_domain} onChange={e=>setShopifyDomain(e.target.value)} placeholder="mio-negozio.myshopify.com"/>
 
-        {shopify_token ? (
-          <div style={{marginTop:10,background:C.green+"15",border:`1px solid ${C.green}44`,borderRadius:6,padding:"8px 12px",display:"flex",alignItems:"center",gap:8}}>
-            <span style={{color:C.green}}>✓</span>
-            <span style={{color:C.green,fontSize:12}}>Shopify connesso via OAuth</span>
-            <button onClick={()=>setShopifyToken("")} style={{marginLeft:"auto",background:"none",color:C.red,border:"none",cursor:"pointer",fontSize:11}}>Disconnetti</button>
+        <div style={{...lbl,marginTop:10}}>Access Token Shopify</div>
+        <input style={inp} type="password" value={shopify_token} onChange={e=>setShopifyToken(e.target.value)} placeholder="shpat_xxxx"/>
+        <div style={{color:C.muted,fontSize:10,marginTop:4}}>Incolla il token dalla Dev Dashboard di Shopify Partners</div>
+        {shopify_token && (
+          <div style={{marginTop:8,background:C.green+"15",border:`1px solid ${C.green}44`,borderRadius:5,padding:"6px 10px",display:"flex",alignItems:"center",gap:8}}>
+            <span style={{color:C.green,fontSize:12}}>✓ Token inserito</span>
+            <button onClick={()=>setShopifyToken("")} style={{marginLeft:"auto",background:"none",color:C.red,border:"none",cursor:"pointer",fontSize:11}}>Rimuovi</button>
           </div>
-        ) : (
-          <button onClick={handleOAuth}
-            style={{marginTop:10,width:"100%",background:C.purple+"22",color:appSettings.clientId?C.purple:C.muted,border:`1px solid ${appSettings.clientId?C.purple+"44":C.border}`,borderRadius:6,padding:"9px",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600}}>
-            {appSettings.clientId ? "🔐 Connetti Shopify via OAuth" : "⚙️ Prima configura le Impostazioni App"}
-          </button>
         )}
 
         <div style={{display:"flex",gap:10,marginTop:20}}>
