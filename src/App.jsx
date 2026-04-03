@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 
 async function wcFetchPage({ wp_url, wp_key, wp_secret, entity, page, category, after, before }) {
   const res = await fetch("/api/wc", {
@@ -79,15 +79,10 @@ const Badge = ({label,color}) => <span style={{background:color+"25",color,borde
 const ENTITIES = { products:{icon:"📦",label:"Prodotti",color:C.accent}, orders:{icon:"🛒",label:"Ordini",color:C.orange}, customers:{icon:"👤",label:"Clienti",color:C.green} };
 const SUBTABS = ["📂 Dati Live","🔗 Mapping","✅ Validazione","🚀 Simulazione","📤 Sync Log"];
 
-const inp = {
-  background:C.bg, color:C.text, border:`1px solid ${C.border}`,
-  borderRadius:5, padding:"7px 10px", fontSize:13,
-  fontFamily:"'IBM Plex Mono',monospace", outline:"none", width:"100%", boxSizing:"border-box",
-};
+const inp = { background:C.bg,color:C.text,border:`1px solid ${C.border}`,borderRadius:5,padding:"7px 10px",fontSize:13,fontFamily:"'IBM Plex Mono',monospace",outline:"none",width:"100%",boxSizing:"border-box" };
 
-// ─── STORE MODAL — completamente separato dal resto del DOM ──────────────────
+// ─── STORE MODAL ─────────────────────────────────────────────────────────────
 function StoreModal({ store, onSave, onClose }) {
-  // stati separati = nessun re-render esterno li tocca
   const [name,           setName]          = useState(store.name           || "");
   const [wp_url,         setWpUrl]         = useState(store.wp_url         || "");
   const [wp_key,         setWpKey]         = useState(store.wp_key         || "");
@@ -98,9 +93,17 @@ function StoreModal({ store, onSave, onClose }) {
   const sec = {color:C.muted,fontSize:10,textTransform:"uppercase",letterSpacing:1,margin:"14px 0 6px"};
   const lbl = {color:C.muted,fontSize:11,marginBottom:4};
 
+  const handleShopifyOAuth = () => {
+    if (!shopify_domain) { alert("Inserisci prima il dominio Shopify"); return; }
+    const shop = shopify_domain.replace(".myshopify.com","");
+    // Salva dati WC temporaneamente in sessionStorage
+    sessionStorage.setItem("pending_store", JSON.stringify({ ...store, name, wp_url, wp_key, wp_secret, shopify_domain }));
+    window.location.href = `/api/shopify-auth?shop=${shop}.myshopify.com`;
+  };
+
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:C.surface,border:`1px solid ${C.accent}44`,borderRadius:10,padding:24,width:460,maxHeight:"90vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:0}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.surface,border:`1px solid ${C.accent}44`,borderRadius:10,padding:24,width:480,maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{fontFamily:"'IBM Plex Sans',sans-serif",fontWeight:700,fontSize:15,color:C.accent,marginBottom:18}}>✏️ Configura Store</div>
 
         <div style={lbl}>Nome</div>
@@ -117,16 +120,25 @@ function StoreModal({ store, onSave, onClose }) {
         <div style={sec}>Shopify</div>
         <div style={lbl}>Store Domain</div>
         <input style={inp} value={shopify_domain} onChange={e=>setShopifyDomain(e.target.value)} placeholder="mio-negozio.myshopify.com"/>
-        <div style={{...lbl,marginTop:10}}>Access Token</div>
-        <input style={inp} type="password" value={shopify_token} onChange={e=>setShopifyToken(e.target.value)} placeholder="shpat_xxxx"/>
+
+        {shopify_token ? (
+          <div style={{marginTop:10,background:C.green+"15",border:`1px solid ${C.green}44`,borderRadius:6,padding:"8px 12px",display:"flex",alignItems:"center",gap:8}}>
+            <span style={{color:C.green}}>✓</span>
+            <span style={{color:C.green,fontSize:12}}>Shopify connesso via OAuth</span>
+            <button onClick={()=>setShopifyToken("")} style={{marginLeft:"auto",background:"none",color:C.red,border:"none",cursor:"pointer",fontSize:11}}>Disconnetti</button>
+          </div>
+        ) : (
+          <button onClick={handleShopifyOAuth} style={{marginTop:10,width:"100%",background:C.purple+"22",color:C.purple,border:`1px solid ${C.purple}44`,borderRadius:6,padding:"9px",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600}}>
+            🔐 Connetti Shopify via OAuth
+          </button>
+        )}
 
         <div style={{display:"flex",gap:10,marginTop:20}}>
           <button onClick={()=>onSave({...store,name,wp_url,wp_key,wp_secret,shopify_domain,shopify_token})}
             style={{background:C.green+"22",color:C.green,border:`1px solid ${C.green}44`,borderRadius:6,padding:"8px 20px",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600,flex:1}}>
             ✓ Salva
           </button>
-          <button onClick={onClose}
-            style={{background:"none",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 16px",fontSize:13,fontFamily:"inherit",cursor:"pointer"}}>
+          <button onClick={onClose} style={{background:"none",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 16px",fontSize:13,fontFamily:"inherit",cursor:"pointer"}}>
             Annulla
           </button>
         </div>
@@ -216,7 +228,7 @@ function FetchOptions({ opts, onChange, entity, cats, selCategory, onSelectCat, 
 export default function App() {
   const [stores, setStores]         = useState([{...newStore(1),name:"Store Demo"}]);
   const [activeStore, setActive]    = useState(0);
-  const [editStore, setEditStore]   = useState(null); // null = chiuso, numero = indice store
+  const [editStore, setEditStore]   = useState(null);
   const [entity, setEntity]         = useState("products");
   const [subtab, setSubtab]         = useState(0);
   const [liveData, setLiveData]     = useState({});
@@ -232,6 +244,36 @@ export default function App() {
   const [progress, setProgress]     = useState(null);
   const [fetchOpts, setFetchOpts]   = useState({limit:"5",after:"",before:""});
   const abortRef                    = useRef(false);
+
+  // ── Gestisce il ritorno OAuth da Shopify ────────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("shopify_connected");
+    const shop      = params.get("shop");
+    const token     = params.get("token");
+    const oauthErr  = params.get("shopify_error");
+
+    if (oauthErr) {
+      addLog("error", `❌ OAuth Shopify: ${decodeURIComponent(oauthErr)}`);
+      window.history.replaceState({}, "", "/");
+      return;
+    }
+
+    if (connected && shop && token) {
+      // Recupera i dati WC salvati prima del redirect
+      const pending = sessionStorage.getItem("pending_store");
+      sessionStorage.removeItem("pending_store");
+      const base = pending ? JSON.parse(pending) : newStore(Date.now());
+      const updated = { ...base, shopify_domain: decodeURIComponent(shop), shopify_token: decodeURIComponent(token) };
+      setStores(s => {
+        const idx = s.findIndex(x => x.id === base.id);
+        if (idx >= 0) { const n=[...s]; n[idx]=updated; return n; }
+        return [...s, updated];
+      });
+      addLog("ok", `✅ Shopify connesso: ${decodeURIComponent(shop)}`);
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
 
   const store    = stores[activeStore];
   const dataKey  = `${store?.id}_${entity}`;
@@ -251,7 +293,7 @@ export default function App() {
   const warnCount  = validation.reduce((a,r)=>a+r.warnings.length,0);
 
   const fetchCats = async () => {
-    if (!store.wp_url||!store.wp_key){addLog("error","❌ Configura le credenziali WooCommerce");return;}
+    if (!store.wp_url||!store.wp_key){addLog("error","❌ Configura WooCommerce");return;}
     setFCats(true);
     try { const {data:raw}=await wcFetchPage({wp_url:store.wp_url,wp_key:store.wp_key,wp_secret:store.wp_secret,entity:"products/categories",page:1}); setCategories(c=>({...c,[store.id]:raw})); addLog("ok",`✅ ${raw.length} categorie`); }
     catch(e){addLog("error",`❌ ${e.message}`);}
@@ -283,7 +325,7 @@ export default function App() {
   };
 
   const doPush = async () => {
-    if (!store.shopify_domain||!store.shopify_token){addLog("error","❌ Configura le credenziali Shopify");return;}
+    if (!store.shopify_domain||!store.shopify_token){addLog("error","❌ Connetti prima Shopify via OAuth");return;}
     const toImport=validation.filter(r=>r.ok);
     if (!toImport.length){addLog("error","❌ Nessun record valido");return;}
     setPushing(true);
@@ -306,13 +348,11 @@ export default function App() {
     <div style={{background:C.bg,minHeight:"100vh",color:C.text,fontFamily:"'IBM Plex Mono','Fira Code',monospace",fontSize:13,display:"flex",flexDirection:"column"}}>
       <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 
-      {/* STORE MODAL — completamente fuori dal flusso della sidebar */}
       {editStore !== null && (
         <StoreModal
           store={stores[editStore] || newStore(Date.now())}
-          onSave={s => { setStores(st=>{const n=[...st];n[editStore]=s;return n;}); setEditStore(null); addLog("ok",`✅ Store "${s.name}" salvato`); }}
-          onClose={() => setEditStore(null)}
-        />
+          onSave={s=>{setStores(st=>{const n=[...st];n[editStore]=s;return n;});setEditStore(null);addLog("ok",`✅ Store "${s.name}" salvato`);}}
+          onClose={()=>setEditStore(null)}/>
       )}
 
       {/* TOP BAR */}
@@ -320,13 +360,13 @@ export default function App() {
         <div style={{width:30,height:30,background:"linear-gradient(135deg,#1f6feb,#6d56f0)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>⚙</div>
         <div>
           <div style={{fontFamily:"'IBM Plex Sans',sans-serif",fontWeight:700,fontSize:13}}>WP → Shopify Sync Console</div>
-          <div style={{color:C.muted,fontSize:10}}>Multi-store · Paginazione · Filtri</div>
+          <div style={{color:C.muted,fontSize:10}}>Multi-store · OAuth · Paginazione</div>
         </div>
         <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
           {stores.map((s,i)=>(
             <button key={s.id} onClick={()=>{setActive(i);setSimIndex(0);setSyncLogs([]);setSelCat(null);}}
               style={{background:activeStore===i?C.accent+"18":"transparent",color:activeStore===i?C.accent:C.muted,border:`1px solid ${activeStore===i?C.accent+"55":C.border}`,borderRadius:5,padding:"4px 11px",fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>
-              🏪 {s.name}
+              🏪 {s.name} {s.shopify_token&&<span style={{color:C.green}}>●</span>}
             </button>
           ))}
           <button onClick={()=>{const ns=newStore(Date.now());setStores(s=>[...s,ns]);setActive(stores.length);setEditStore(stores.length);}}
@@ -353,7 +393,7 @@ export default function App() {
           <div style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:6,padding:"9px 10px",marginBottom:6}}>
             <div style={{fontFamily:"'IBM Plex Sans',sans-serif",fontWeight:700,fontSize:12,color:C.accent,marginBottom:5}}>🏪 {store?.name}</div>
             <div style={{color:C.muted,fontSize:10,marginBottom:2}}>WC: {store?.wp_url?<span style={{color:C.yellow}}>configurato</span>:<span style={{color:C.red}}>non impostato</span>}</div>
-            <div style={{color:C.muted,fontSize:10,marginBottom:6}}>Shopify: {store?.shopify_domain?<span style={{color:C.yellow}}>configurato</span>:<span style={{color:C.red}}>non impostato</span>}</div>
+            <div style={{color:C.muted,fontSize:10,marginBottom:6}}>Shopify: {store?.shopify_token?<span style={{color:C.green}}>● connesso</span>:<span style={{color:C.red}}>non connesso</span>}</div>
             {cats.length>0&&<div style={{color:C.teal,fontSize:10,marginBottom:6}}>🗂 {cats.length} categorie</div>}
             <button onClick={()=>setEditStore(activeStore)}
               style={{background:"none",color:C.accent,border:`1px solid ${C.accent}33`,borderRadius:4,padding:"3px 10px",fontSize:11,fontFamily:"inherit",cursor:"pointer",width:"100%"}}>✏️ Modifica</button>
@@ -422,7 +462,7 @@ export default function App() {
                 <div style={{color:C.muted,fontSize:12,marginBottom:20}}>Clicca <strong style={{color:C.accent}}>✏️ Modifica</strong> per configurare lo store, poi <strong style={{color:C.accent}}>⬇ Da WooCommerce</strong></div>
                 <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:16,textAlign:"left",maxWidth:440,margin:"0 auto",fontSize:12}}>
                   <div style={{color:C.yellow,fontWeight:600,marginBottom:8}}>📋 Checklist:</div>
-                  {[["URL WooCommerce",store?.wp_url],["Consumer Key",store?.wp_key],["Consumer Secret",store?.wp_secret],["Shopify Domain",store?.shopify_domain],["Shopify Token",store?.shopify_token]].map(([l,v])=>(
+                  {[["URL WooCommerce",store?.wp_url],["Consumer Key",store?.wp_key],["Consumer Secret",store?.wp_secret],["Shopify connesso",store?.shopify_token]].map(([l,v])=>(
                     <div key={l} style={{display:"flex",gap:8,marginBottom:4}}><span style={{color:v?C.green:C.red}}>{v?"✓":"✗"}</span><span style={{color:v?C.text:C.muted}}>{l}</span></div>
                   ))}
                 </div>
@@ -522,4 +562,3 @@ export default function App() {
     </div>
   );
 }
-
