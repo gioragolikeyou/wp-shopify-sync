@@ -144,15 +144,11 @@ function StoreModal({ store, appSettings, onSave, onClose, onLog }) {
 
   const handleOAuth = () => {
     if (!shopify_domain) { alert("Inserisci il dominio Shopify"); return; }
-    if (!appSettings.clientId || !appSettings.clientSecret) { alert("Configura prima le Impostazioni App (⚙️ in alto)"); return; }
+    if (!appSettings.clientId || !appSettings.clientSecret) { alert("Configura prima le Impostazioni App"); return; }
     const shop = shopify_domain.includes(".myshopify.com") ? shopify_domain : `${shopify_domain}.myshopify.com`;
-    const handleOAuth = () => {
-  if (!shopify_domain) { alert("Inserisci il dominio Shopify"); return; }
-  if (!appSettings.clientId || !appSettings.clientSecret) { alert("Configura prima le Impostazioni App"); return; }
-  const shop = shopify_domain.includes(".myshopify.com") ? shopify_domain : `${shopify_domain}.myshopify.com`;
-  sessionStorage.setItem("pending_store", JSON.stringify({...store,name,wp_url,wp_key,wp_secret,shopify_domain:shop}));
-  window.location.href = `/api/shopify-auth?shop=${shop}&client_id=${appSettings.clientId}&client_secret=${encodeURIComponent(appSettings.clientSecret)}&app_url=${encodeURIComponent(appSettings.appUrl)}`;
-};
+    sessionStorage.setItem("pending_store", JSON.stringify({...store,name,wp_url,wp_key,wp_secret,shopify_domain:shop}));
+    window.location.href = `/api/shopify-auth?shop=${shop}&client_id=${encodeURIComponent(appSettings.clientId)}&client_secret=${encodeURIComponent(appSettings.clientSecret)}&app_url=${encodeURIComponent(appSettings.appUrl)}`;
+  };
 
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}}>
