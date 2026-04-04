@@ -50,6 +50,13 @@ function flattenWC(row) {
   if (row.meta_data) row.meta_data.forEach(m=>{flat[`meta:${m.key}`]=m.value;});
   if (Array.isArray(row.categories)) { row.categories.forEach((cat,i)=>{flat[`categories[${i}].id`]=cat.id;flat[`categories[${i}].name`]=cat.name;flat[`categories[${i}].slug`]=cat.slug;}); flat["_categories_names"]=row.categories.map(c=>c.name).join(", "); }
   if (row.dimensions&&typeof row.dimensions==="object") Object.entries(row.dimensions).forEach(([k,v])=>{flat[`dimensions.${k}`]=v;});
+  if (Array.isArray(row.images)) {
+    flat["images"] = row.images.map(img=>({src:img.src,alt:img.alt||""}));
+    flat["_images_count"] = row.images.length;
+  }
+  if (Array.isArray(row.line_items)) {
+    flat["_line_items"] = row.line_items;
+  }
   return flat;
 }
 
@@ -65,7 +72,22 @@ function validateRow(entity, flat, mapping) {
 
 function buildPayload(entity, row, mapping, metaTypeMap) {
   const flat=flattenWC(row);
-  const obj=entity==="products"?{variants:[{}],metafields:[]}:entity==="orders"?{billing_address:{},metafields:[]}:{addresses:[{}],metafields:[]};
+  const obj=entity==="products"?{variants:[{}],metafields:[],images:[]}:entity==="orders"?{billing_address:{},line_items:[],metafields:[]}:{addresses:[{}],metafields:[]};
+
+  // Immagini prodotto
+  if (entity==="products" && Array.isArray(flat["images"])) {
+    obj.images = flat["images"].map(img=>({src:img.src,alt:img.alt}));
+  }
+
+  // Line items ordini (richiesti da Shopify)
+  if (entity==="orders" && Array.isArray(flat["_line_items"])) {
+    obj.line_items = flat["_line_items"].map(item=>({
+      title: item.name || item.product_id || "Prodotto",
+      quantity: parseInt(item.quantity) || 1,
+      price: item.price || "0",
+      sku: item.sku || "",
+    }));
+  }
   Object.entries(mapping).forEach(([wpField,target])=>{
     if (!target) return;
     let val=flat[wpField];
