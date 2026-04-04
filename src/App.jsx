@@ -80,13 +80,23 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
   }
 
   // Line items ordini (richiesti da Shopify)
-  if (entity==="orders" && Array.isArray(flat["_line_items"])) {
-    obj.line_items = flat["_line_items"].map(item=>({
-      title: item.name || item.product_id || "Prodotto",
-      quantity: parseInt(item.quantity) || 1,
-      price: item.price || "0",
-      sku: item.sku || "",
-    }));
+  if (entity==="orders") {
+    const items = flat["_line_items"];
+    if (Array.isArray(items) && items.length > 0) {
+      obj.line_items = items.map(item=>({
+        title: item.name || String(item.product_id || "Prodotto"),
+        quantity: parseInt(item.quantity) || 1,
+        price: String(item.subtotal ? (parseFloat(item.subtotal)/parseInt(item.quantity||1)).toFixed(2) : item.price || "0"),
+        sku: item.sku || "",
+      }));
+    } else {
+      // Shopify richiede almeno un line item — usa il totale come placeholder
+      obj.line_items = [{
+        title: "Ordine importato da WooCommerce",
+        quantity: 1,
+        price: String(flat["total"] || flat["order_total"] || "0"),
+      }];
+    }
   }
   Object.entries(mapping).forEach(([wpField,target])=>{
     if (!target) return;
