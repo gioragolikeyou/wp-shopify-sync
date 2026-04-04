@@ -10,14 +10,16 @@ export default async function handler(req, res) {
 
   try {
     let ids = [];
-    let url  = `${apiBase}/${entity}.json?limit=250&status=any`;
+    // products non supporta status=any
+    const statusParam = entity === "products" ? "published_status=any" : "status=any";
+    let url  = `${apiBase}/${entity}.json?limit=250&${statusParam}`;
     while (url) {
       const r    = await fetch(url, { headers });
       const data = await r.json();
       ids = [...ids, ...(data[entity] || []).map(i => i.id)];
       const link = r.headers.get("link") || "";
       const next = link.match(/page_info=([^&>]+)[^>]*>;\s*rel="next"/);
-      url = next ? `${apiBase}/${entity}.json?limit=250&status=any&page_info=${next[1]}` : null;
+      url = next ? `${apiBase}/${entity}.json?limit=250&${statusParam}&page_info=${next[1]}` : null;
     }
 
     let deleted = 0, failed = 0;
