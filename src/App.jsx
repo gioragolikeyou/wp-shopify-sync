@@ -79,6 +79,15 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
     obj.images = flat["images"].map(img=>({src:img.src,alt:img.alt}));
   }
 
+  // Coupon/sconti ordine
+  if (entity==="orders" && Array.isArray(row.coupon_lines) && row.coupon_lines.length > 0) {
+    obj.discount_codes = row.coupon_lines.map(c => ({
+      code:   c.code,
+      amount: String(parseFloat(c.discount || 0).toFixed(2)),
+      type:   "fixed_amount",
+    }));
+  }
+
   // Tag con ID ordine WC per evitare duplicati
   if (entity==="orders" && flat["id"]) {
     obj.tags = `wc_order_${flat["id"]}`;
