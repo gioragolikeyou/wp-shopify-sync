@@ -79,6 +79,11 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
     obj.images = flat["images"].map(img=>({src:img.src,alt:img.alt}));
   }
 
+  // Tag con ID ordine WC per evitare duplicati
+  if (entity==="orders" && flat["id"]) {
+    obj.tags = `wc_order_${flat["id"]}`;
+  }
+
   // Line items ordini (richiesti da Shopify)
   if (entity==="orders") {
     const items = flat["_line_items"];
@@ -389,21 +394,49 @@ export default function App() {
     finally{setFetching(false);setProgress(null);}
   };
 
+  const doDelete = async () => {
+    if (!store.shopify_token) { addLog("error","❌ Shopify non connesso"); return; }
+    if (!window.confirm(`⚠️ Sei sicuro di voler cancellare TUTTI i ${entity} da Shopify?
+
+Questa operazione non è reversibile.`)) return;
+    addLog("info", `🗑 Cancellazione ${entity} da ${store.shopify_domain}…`);
+    try {
+      const res = await fetch("/api/shopify-delete", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      addLog("ok", `✅ Cancellati ${json.deleted} ${entity}${json.failed>0?`, ${json.failed} falliti`:""}`);
+    } catch(e) { addLog("error", `❌ ${e.message}`); }
+  };
+
   const doPush = async () => {
     if (!store.shopify_token){addLog("error","❌ Connetti Shopify via OAuth");return;}
     const toImport=validation.filter(r=>r.ok);
     if (!toImport.length){addLog("error","❌ Nessun record valido");return;}
     setPushing(true);
     addLog("info",`⬆ Importo ${toImport.length} ${entity}…`);
-    let ok=0,fail=0;
+    let ok=0,fail=0,skipped=0;
     for (const {row} of toImport) {
-      setProgress({loaded:ok+fail,total:toImport.length,label:"Importazione in Shopify…"});
-      try { await shopifyPush({shopify_domain:store.shopify_domain,shopify_token:store.shopify_token,entity,payload:buildPayload(entity,row,mapping,metaTypeMap)}); ok++; }
-      catch(e){fail++;addLog("error",`❌ ${e.message}`);}
+      setProgress({loaded:ok+fail+skipped,total:toImport.length,label:"Importazione in Shopify…"});
+      try {
+        const payload = buildPayload(entity,row,mapping,metaTypeMap);
+        // Per gli ordini: verifica se esiste già tramite tag wc_order_ID
+        if (entity==="orders" && row.id) {
+          const checkRes = await fetch("/api/shopify", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity:"check_order", check_tag:`wc_order_${row.id}`}),
+          });
+          const checkJson = await checkRes.json();
+          if (checkJson.exists) { skipped++; addLog("info",`⏭ Ordine #${row.id} già importato, saltato`); continue; }
+        }
+        await shopifyPush({shopify_domain:store.shopify_domain,shopify_token:store.shopify_token,entity,payload}); ok++;
+      } catch(e){fail++;addLog("error",`❌ ${e.message}`);}
       await new Promise(r=>setTimeout(r,400));
     }
     setProgress(null);
-    addLog(fail>0?"warn":"ok",`${fail>0?"⚠":"✅"} ${ok} ok, ${fail} falliti`);
+    addLog((fail>0||skipped>0)?"warn":"ok",`${fail>0?"⚠":"✅"} ${ok} ok, ${skipped} saltati, ${fail} falliti`);
     setPushing(false);
   };
 
@@ -450,6 +483,10 @@ export default function App() {
           <button onClick={doPush} disabled={pushing||!data.length}
             style={{background:pushing||!data.length?C.surface2:C.green+"22",color:pushing||!data.length?C.muted:C.green,border:`1px solid ${pushing||!data.length?C.border:C.green+"44"}`,borderRadius:5,padding:"5px 12px",fontSize:12,fontFamily:"inherit",cursor:pushing||!data.length?"not-allowed":"pointer"}}>
             {pushing?"⏳ Pushing…":"⬆ Su Shopify"}
+          </button>
+          <button onClick={doDelete} disabled={!store?.shopify_token}
+            style={{background:C.red+"15",color:store?.shopify_token?C.red:C.muted,border:`1px solid ${store?.shopify_token?C.red+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:store?.shopify_token?"pointer":"not-allowed"}} title={`Cancella tutti i ${entity} da Shopify`}>
+            🗑
           </button>
         </div>
       </div>
