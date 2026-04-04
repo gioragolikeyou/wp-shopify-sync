@@ -1,39 +1,44 @@
-// api/shopify-delete.js — cancella ordini/prodotti/clienti da Shopify
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  const { shopify_domain, shopify_token, entity, tag_filter } = req.body;
+  const { shopify_domain, shopify_token, entity } = req.body;
   if (!shopify_domain || !shopify_token || !entity)
     return res.status(400).json({ error: "Parametri mancanti" });
 
-  const domain = shopify_domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const domain  = shopify_domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
   const apiBase = `https://${domain}/admin/api/2024-01`;
-  const headers = { "X-Shopify-Access-Token": shopify_token, "Content-Type": "application/json", "User-Agent": "WP-Shopify-SyncConsole/1.0" };
+  const headers = { "X-Shopify-Access-Token": shopify_token, "Content-Type": "application/json" };
 
   try {
-    // Fetch tutti gli ID da cancellare
     let ids = [];
-    let page_info = null;
-    do {
-      let url = `${apiBase}/${entity}.json?limit=250&status=any`;
-      if (tag_filter) url += `&tag=${encodeURIComponent(tag_filter)}`;
-      if (page_info)  url += `&page_info=${page_info}`;
-      const r = await fetch(url, { headers });
+    let url  = `${apiBase}/${entity}.json?limit=250&status=any`;
+    while (url) {
+      const r    = await fetch(url, { headers });
       const data = await r.json();
-      const items = data[entity] || [];
-      ids = [...ids, ...items.map(i => i.id)];
-      // paginazione link header
+      ids = [...ids, ...(data[entity] || []).map(i => i.id)];
       const link = r.headers.get("link") || "";
       const next = link.match(/page_info=([^&>]+)[^>]*>;\s*rel="next"/);
-      page_info = next ? next[1] : null;
-    } while (page_info);
+      url = next ? `${apiBase}/${entity}.json?limit=250&status=any&page_info=${next[1]}` : null;
+    }
 
-    // Cancella uno per uno
     let deleted = 0, failed = 0;
     for (const id of ids) {
-      const r = await fetch(`${apiBase}/${entity}/${id}.json`, { method: "DELETE", headers });
-      if (r.ok || r.status === 200 || r.status === 204) deleted++;
-      else failed++;
-      await new Promise(r => setTimeout(r, 300));
+      try {
+        // Per gli ordini: prima chiudi poi cancella
+        if (entity === "orders") {
+          await fetch(`${apiBase}/orders/${id}/close.json`, { method:"POST", headers, body:"{}" });
+        }
+        const r = await fetch(`${apiBase}/${entity}/${id}.json`, { method:"DELETE", headers });
+        if (r.ok || r.status===200||r.status===204) deleted++;
+        else { 
+          const err = await r.json();
+          // Se non cancellabile (ordine completato), archivia
+          if (entity==="orders") {
+            const arc = await fetch(`${apiBase}/orders/${id}/close.json`, {method:"POST",headers,body:"{}"});
+            if (arc.ok) deleted++; else failed++;
+          } else failed++;
+        }
+      } catch { failed++; }
+      await new Promise(r => setTimeout(r, 250));
     }
     return res.status(200).json({ deleted, failed, total: ids.length });
   } catch (err) {

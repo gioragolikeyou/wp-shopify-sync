@@ -1,23 +1,58 @@
-const ENTITY_KEY = { products: "product", orders: "order", customers: "customer" };
+const ENTITY_KEY = { products:"product", orders:"order", customers:"customer" };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  const { shopify_domain, shopify_token, entity, payload, shopify_id } = req.body;
-  if (!shopify_domain || !shopify_token || !entity || !payload)
+  const { shopify_domain, shopify_token, entity, payload, shopify_id, check_tag } = req.body;
+  if (!shopify_domain || !shopify_token || !entity)
     return res.status(400).json({ error: "Parametri mancanti" });
-  if (!ENTITY_KEY[entity])
+
+  const domain = shopify_domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+
+  // Dedup check per ordini
+  if (entity === "check_order" && check_tag) {
+    try {
+      const url = `https://${domain}/admin/api/2024-01/orders.json?tag=${encodeURIComponent(check_tag)}&limit=1&status=any`;
+      const r = await fetch(url, {
+        headers: { "X-Shopify-Access-Token": shopify_token, "User-Agent": "WP-Shopify-SyncConsole/1.0" },
+      });
+      const data = await r.json();
+      return res.status(200).json({ exists: Array.isArray(data.orders) && data.orders.length > 0 });
+    } catch (err) {
+      return res.status(200).json({ exists: false });
+    }
+  }
+
+  if (!payload || !ENTITY_KEY[entity])
     return res.status(400).json({ error: `Entità non valida: ${entity}` });
 
-  const domain  = shopify_domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  const method  = shopify_id ? "PUT" : "POST";
-  const path    = shopify_id
-    ? `https://${domain}/admin/api/2024-01/${entity}/${shopify_id}.json`
+  let method = shopify_id ? "PUT" : "POST";
+  let resolvedId = shopify_id;
+
+  // Per i clienti: cerca per email per evitare duplicati
+  if (entity === "customers" && !shopify_id && payload.email) {
+    try {
+      const searchUrl = `https://${domain}/admin/api/2024-01/customers/search.json?query=email:${encodeURIComponent(payload.email)}&limit=1`;
+      const searchRes = await fetch(searchUrl, { headers: { "X-Shopify-Access-Token": shopify_token } });
+      const searchData = await searchRes.json();
+      if (searchData.customers && searchData.customers.length > 0) {
+        resolvedId = searchData.customers[0].id;
+        method = "PUT";
+      }
+    } catch {}
+  }
+
+  const path = resolvedId
+    ? `https://${domain}/admin/api/2024-01/${entity}/${resolvedId}.json`
     : `https://${domain}/admin/api/2024-01/${entity}.json`;
 
   try {
     const upstream = await fetch(path, {
       method,
-      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": shopify_token, "User-Agent": "WP-Shopify-SyncConsole/1.0" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": shopify_token,
+        "User-Agent": "WP-Shopify-SyncConsole/1.0",
+      },
       body: JSON.stringify({ [ENTITY_KEY[entity]]: payload }),
       signal: AbortSignal.timeout(20000),
     });
@@ -25,9 +60,6 @@ export default async function handler(req, res) {
     if (!upstream.ok) return res.status(upstream.status).json({ error: `Shopify ${upstream.status}`, detail: json?.errors || json });
     return res.status(200).json({ success: true, id: json[ENTITY_KEY[entity]]?.id, result: json[ENTITY_KEY[entity]] });
   } catch (err) {
-    return res.status(502).json({
-      error: err.name === "TimeoutError" ? "Timeout Shopify" : "Errore di rete",
-      detail: err.message,
-    });
+    return res.status(502).json({ error: "Errore di rete", detail: err.message });
   }
 }
