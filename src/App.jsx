@@ -42,7 +42,7 @@ const SHOPIFY_TARGETS = {
 };
 
 const META_TYPES = ["single_line_text_field","multi_line_text_field","number_integer","number_decimal","boolean","date","date_time","url","json","color","weight","rating"];
-const STATUS_MAP = { completed:"paid", processing:"pending", "on-hold":"pending", cancelled:"voided", refunded:"refunded", pending:"pending" };
+const STATUS_MAP = { completed:"paid", processing:"pending", "on-hold":"pending", cancelled:"voided", refunded:"refunded", pending:"pending", "checkout-draft":"pending", failed:"voided", "pending-payment":"pending" };
 
 function flattenWC(row) {
   const flat = { ...row };
@@ -102,7 +102,7 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
     if (!target) return;
     let val=flat[wpField];
     if (val===undefined||val===null||val==="") return;
-    if (target==="financial_status"&&STATUS_MAP[val]) val=STATUS_MAP[val];
+    if (target==="financial_status") val=STATUS_MAP[val]||"pending";
     if (target==="accepts_marketing") val=["yes","true","1"].includes(String(val).toLowerCase());
     if (target.startsWith("meta:")) { const key=target.replace("meta:custom.",""); const type=metaTypeMap?.[target]||"single_line_text_field"; if (type==="number_integer") val=parseInt(val); else if (type==="number_decimal") val=parseFloat(val); obj.metafields.push({namespace:"custom",key,type,value:val}); }
     else if (target.includes(".")) { const [p,c]=target.split("."); if (p==="variants") obj.variants[0][c]=val; else if (p==="billing_address") obj.billing_address[c]=val; else if (p==="addresses") obj.addresses[0][c]=val; }
