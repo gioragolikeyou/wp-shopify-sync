@@ -40,7 +40,7 @@ const LS = {
 const newStore = (id) => ({ id, name:`Store ${id}`, wp_url:"", wp_key:"", wp_secret:"", shopify_domain:"", shopify_token:"" });
 
 const DEFAULT_MAPPING = {
-  products: { id:"", name:"title", description:"body_html", short_description:"", sku:"variants.sku", regular_price:"variants.price", sale_price:"variants.compare_at_price", stock_quantity:"variants.inventory_quantity", stock_quantity:"variants.inventory_quantity", "categories[0].name":"product_type", "categories[0].slug":"meta:custom.categoria_slug", weight:"meta:custom.weight", "dimensions.length":"meta:custom.dim_length", "dimensions.width":"meta:custom.dim_width", "dimensions.height":"meta:custom.dim_height" },
+  products: { id:"", name:"title", description:"body_html", short_description:"", tags:"tags", sku:"variants.sku", regular_price:"variants.price", sale_price:"variants.compare_at_price", stock_quantity:"variants.inventory_quantity", stock_quantity:"variants.inventory_quantity", "categories[0].name":"product_type", "categories[0].slug":"meta:custom.categoria_slug", weight:"meta:custom.weight", "dimensions.length":"meta:custom.dim_length", "dimensions.width":"meta:custom.dim_width", "dimensions.height":"meta:custom.dim_height" },
   orders: { id:"name", date_created:"created_at", "billing.email":"email", status:"financial_status", total:"total_price", shipping_total:"shipping_price", payment_method:"payment_gateway", customer_note:"note", "billing.first_name":"billing_address.first_name", "billing.last_name":"billing_address.last_name", "billing.address_1":"billing_address.address1", "billing.city":"billing_address.city", "billing.postcode":"billing_address.zip", "billing.country":"billing_address.country_code", "billing.phone":"billing_address.phone" },
   customers: { id:"", email:"email", first_name:"first_name", last_name:"last_name", "billing.phone":"phone", "billing.address_1":"addresses.address1", "billing.city":"addresses.city", "billing.postcode":"addresses.zip", "billing.country":"addresses.country_code", date_created:"meta:custom.data_registrazione", orders_count:"meta:custom.num_ordini", total_spent:"meta:custom.totale_speso" },
 };
@@ -484,6 +484,58 @@ export default function App() {
     finally{setFetching(false);setProgress(null);}
   };
 
+  const syncCollections = async () => {
+    if (!store.shopify_token) { addLog("error","❌ Shopify non connesso"); return; }
+    if (!data.length) { addLog("error","❌ Prima importa i prodotti su Shopify"); return; }
+    addLog("info", `🗂 Sincronizzazione collezioni da categorie WC…`);
+    try {
+      // Raggruppa prodotti Shopify per categoria WC
+      // Recupera gli ID Shopify dei prodotti già importati
+      const checkRes = await fetch(`https://${store.shopify_domain}/admin/api/2024-01/products.json?limit=250&fields=id,title,tags`, {
+        headers: { "X-Shopify-Access-Token": store.shopify_token }
+      });
+      // Usa la nostra API per farlo passare dal proxy
+      const collectionsMap = {};
+      data.forEach(row => {
+        const flat = flattenWC(row);
+        const cats = row.categories || [];
+        cats.forEach(cat => {
+          if (!collectionsMap[cat.name]) collectionsMap[cat.name] = [];
+          // Usiamo il nome del prodotto per trovarlo su Shopify dopo
+          collectionsMap[cat.name].push({ wc_id: row.id, name: flat.name });
+        });
+      });
+
+      // Recupera prodotti Shopify per matchare gli ID
+      const shRes = await fetch("/api/shopify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shopify_domain: store.shopify_domain, shopify_token: store.shopify_token, entity: "get_products" }),
+      });
+
+      // Crea collezioni con i dati che abbiamo
+      const collectionsPayload = Object.entries(collectionsMap).map(([title, products]) => ({
+        title,
+        product_names: products.map(p => p.name),
+      }));
+
+      const res = await fetch("/api/shopify-collections", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shopify_domain: store.shopify_domain,
+          shopify_token: store.shopify_token,
+          collections: collectionsPayload,
+          wc_products: data,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      json.results.forEach(r => {
+        if (r.error) addLog("error", `❌ Collezione "${r.title}": ${r.error}`);
+        else addLog("ok", `✅ Collezione "${r.title}": ${r.added} prodotti`);
+      });
+    } catch(e) { addLog("error", `❌ ${e.message}`); }
+  };
+
   const doDelete = async () => {
     if (!store.shopify_token) { addLog("error","❌ Shopify non connesso"); return; }
     if (!window.confirm(`⚠️ Sei sicuro di voler cancellare TUTTI i ${entity} da Shopify?
@@ -574,6 +626,12 @@ Questa operazione non è reversibile.`)) return;
             style={{background:pushing||!data.length?C.surface2:C.green+"22",color:pushing||!data.length?C.muted:C.green,border:`1px solid ${pushing||!data.length?C.border:C.green+"44"}`,borderRadius:5,padding:"5px 12px",fontSize:12,fontFamily:"inherit",cursor:pushing||!data.length?"not-allowed":"pointer"}}>
             {pushing?"⏳ Pushing…":"⬆ Su Shopify"}
           </button>
+          {entity==="products" && (
+            <button onClick={syncCollections} disabled={!store?.shopify_token||!data.length}
+              style={{background:C.teal+"15",color:store?.shopify_token&&data.length?C.teal:C.muted,border:`1px solid ${store?.shopify_token&&data.length?C.teal+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:store?.shopify_token&&data.length?"pointer":"not-allowed"}} title="Crea collezioni da categorie WC">
+              🗂
+            </button>
+          )}
           <button onClick={doDelete} disabled={!store?.shopify_token}
             style={{background:C.red+"15",color:store?.shopify_token?C.red:C.muted,border:`1px solid ${store?.shopify_token?C.red+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:store?.shopify_token?"pointer":"not-allowed"}} title={`Cancella tutti i ${entity} da Shopify`}>
             🗑
