@@ -80,7 +80,7 @@ function flattenWC(row) {
 function validateRow(entity, flat, mapping) {
   const errors=[], warnings=[];
   const get = t => { const f=Object.keys(mapping).find(k=>mapping[k]===t); return f?flat[f]:null; };
-  if (entity==="products") { if (!get("title")) errors.push("Titolo mancante"); if (isNaN(parseFloat(get("variants.price")||get("variants.compare_at_price")))) errors.push("Prezzo non valido"); }
+  if (entity==="products") { if (!get("title")) errors.push("Titolo mancante"); if (flat["type"] !== "variable" && isNaN(parseFloat(get("variants.price")||get("variants.compare_at_price")))) errors.push("Prezzo non valido"); }
   if (entity==="orders") { if (!get("email")&&!flat["billing.email"]) errors.push("Email mancante"); if (!get("total_price")||isNaN(parseFloat(get("total_price")))) errors.push("Totale non valido"); }
   if (entity==="customers") { if (!get("email")&&!flat.email) errors.push("Email mancante"); }
   Object.entries(mapping).forEach(([f,t])=>{ if (t?.startsWith("meta:")&&!flat[f]) warnings.push(`${f} vuoto → metafield saltato`); });
