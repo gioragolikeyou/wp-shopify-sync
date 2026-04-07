@@ -30,7 +30,7 @@ const LS = {
 const newStore = (id) => ({ id, name:`Store ${id}`, wp_url:"", wp_key:"", wp_secret:"", shopify_domain:"", shopify_token:"" });
 
 const DEFAULT_MAPPING = {
-  products: { id:"", name:"title", description:"body_html", sku:"variants.sku", regular_price:"variants.compare_at_price", sale_price:"variants.price", stock_quantity:"variants.inventory_quantity", "categories[0].name":"product_type", "categories[0].slug":"meta:custom.categoria_slug", weight:"meta:custom.weight", "dimensions.length":"meta:custom.dim_length", "dimensions.width":"meta:custom.dim_width", "dimensions.height":"meta:custom.dim_height" },
+  products: { id:"", name:"title", description:"body_html", short_description:"", sku:"variants.sku", regular_price:"variants.price", sale_price:"variants.compare_at_price", stock_quantity:"variants.inventory_quantity", "categories[0].name":"product_type", "categories[0].slug":"meta:custom.categoria_slug", weight:"meta:custom.weight", "dimensions.length":"meta:custom.dim_length", "dimensions.width":"meta:custom.dim_width", "dimensions.height":"meta:custom.dim_height" },
   orders: { id:"name", date_created:"created_at", "billing.email":"email", status:"financial_status", total:"total_price", shipping_total:"shipping_price", payment_method:"payment_gateway", customer_note:"note", "billing.first_name":"billing_address.first_name", "billing.last_name":"billing_address.last_name", "billing.address_1":"billing_address.address1", "billing.city":"billing_address.city", "billing.postcode":"billing_address.zip", "billing.country":"billing_address.country_code", "billing.phone":"billing_address.phone" },
   customers: { id:"", email:"email", first_name:"first_name", last_name:"last_name", "billing.phone":"phone", "billing.address_1":"addresses.address1", "billing.city":"addresses.city", "billing.postcode":"addresses.zip", "billing.country":"addresses.country_code", date_created:"meta:custom.data_registrazione", orders_count:"meta:custom.num_ordini", total_spent:"meta:custom.totale_speso" },
 };
@@ -73,6 +73,13 @@ function validateRow(entity, flat, mapping) {
 function buildPayload(entity, row, mapping, metaTypeMap) {
   const flat=flattenWC(row);
   const obj=entity==="products"?{variants:[{}],metafields:[],images:[]}:entity==="orders"?{billing_address:{},line_items:[],metafields:[]}:{addresses:[{}],metafields:[]};
+
+  // Descrizione: usa description, fallback a short_description
+  if (entity==="products") {
+    if (!obj.body_html && flat["short_description"]) {
+      obj.body_html = flat["short_description"];
+    }
+  }
 
   // Immagini prodotto
   if (entity==="products" && Array.isArray(flat["images"])) {
