@@ -1,4 +1,4 @@
-const ALLOWED = ["products", "orders", "customers", "products/categories"];
+const ALLOWED = ["products", "orders", "customers", "products/categories", "product_variations"];
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -16,10 +16,23 @@ export default async function handler(req, res) {
     page: String(page),
   });
 
-  // orderby=date solo per products e orders, non customers
+  // orderby solo per products e orders
   if (entity !== "customers" && entity !== "products/categories") {
     params.set("orderby", "date");
     params.set("order", "desc");
+  }
+
+  // Varianti prodotto: /products/{id}/variations
+  if (entity === "product_variations") {
+    const { product_id } = req.body;
+    if (!product_id) return res.status(400).json({ error: "product_id obbligatorio" });
+    const varUrl = `${base}/wp-json/wc/v3/products/${product_id}/variations?${params.toString()}`;
+    try {
+      const upstream = await fetch(varUrl, { headers: { "User-Agent": "WP-Shopify-SyncConsole/1.0" }, signal: AbortSignal.timeout(15000) });
+      if (!upstream.ok) { const b = await upstream.text(); return res.status(upstream.status).json({ error: `WC ${upstream.status}`, detail: b.slice(0,500) }); }
+      const data = await upstream.json();
+      return res.status(200).json({ data, total: data.length, totalPages: 1, page: 1 });
+    } catch(err) { return res.status(502).json({ error: err.message }); }
   }
 
   if (category && entity === "products") params.set("category", String(category));

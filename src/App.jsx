@@ -11,6 +11,16 @@ async function wcFetchPage({ wp_url, wp_key, wp_secret, entity, page, category, 
   return json;
 }
 
+async function wcFetchVariations({ wp_url, wp_key, wp_secret, product_id }) {
+  const res = await fetch("/api/wc", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ wp_url, wp_key, wp_secret, entity: "product_variations", product_id, per_page: 100, page: 1 }),
+  });
+  const json = await res.json();
+  if (!res.ok) return [];
+  return json.data || [];
+}
+
 async function shopifyPush({ shopify_domain, shopify_token, entity, payload }) {
   const res = await fetch("/api/shopify", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -57,6 +67,9 @@ function flattenWC(row) {
   if (Array.isArray(row.line_items)) {
     flat["_line_items"] = row.line_items;
   }
+  if (Array.isArray(row._variations)) {
+    flat["_variations"] = row._variations;
+  }
   return flat;
 }
 
@@ -78,6 +91,31 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
   if (entity==="products") {
     if (!obj.body_html && flat["short_description"]) {
       obj.body_html = flat["short_description"];
+    }
+    // Prodotti variabili: usa le varianti pre-caricate se disponibili
+    if (flat["_variations"] && flat["_variations"].length > 0) {
+      const vars = flat["_variations"];
+      // Attributes / options
+      const attrNames = [...new Set(vars.flatMap(v => (v.attributes||[]).map(a => a.name)))].slice(0,3);
+      if (attrNames.length > 0) {
+        obj.options = attrNames.map(name => ({ name }));
+        obj.variants = vars.map(v => {
+          const attrMap = Object.fromEntries((v.attributes||[]).map(a=>[a.name, a.option]));
+          const variant = {
+            option1: attrMap[attrNames[0]] || "",
+            option2: attrNames[1] ? (attrMap[attrNames[1]] || "") : undefined,
+            option3: attrNames[2] ? (attrMap[attrNames[2]] || "") : undefined,
+            price: v.sale_price || v.regular_price || v.price || "0",
+            compare_at_price: v.sale_price && v.regular_price ? v.regular_price : undefined,
+            sku: v.sku || "",
+            inventory_quantity: parseInt(v.stock_quantity) || 0,
+            inventory_management: v.manage_stock ? "shopify" : null,
+          };
+          // Rimuovi undefined
+          Object.keys(variant).forEach(k => variant[k] === undefined && delete variant[k]);
+          return variant;
+        });
+      }
     }
   }
 
@@ -402,7 +440,24 @@ export default function App() {
         if (allRows.length>=limit) break;
         if (page<=totalPages) await new Promise(r=>setTimeout(r,200));
       } while (page<=totalPages);
-      const final=isFinite(limit)?allRows.slice(0,limit):allRows;
+      let final=isFinite(limit)?allRows.slice(0,limit):allRows;
+
+      // Per i prodotti variabili: carica le varianti
+      if (entity==="products") {
+        const variableProducts = final.filter(p => p.type === "variable");
+        if (variableProducts.length > 0) {
+          addLog("info", `🔄 Carico varianti per ${variableProducts.length} prodotti variabili…`);
+          const withVariations = await Promise.all(final.map(async p => {
+            if (p.type !== "variable") return p;
+            try {
+              const vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
+              return { ...p, _variations: vars };
+            } catch { return p; }
+          }));
+          final = withVariations;
+        }
+      }
+
       setLiveData(d=>({...d,[dataKey]:final}));
       addLog("ok",`✅ ${final.length}${total>final.length?` di ${total}`:""} ${entity} caricati`);
       setSimIndex(0);setSubtab(0);
