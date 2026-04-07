@@ -486,52 +486,36 @@ export default function App() {
 
   const syncCollections = async () => {
     if (!store.shopify_token) { addLog("error","❌ Shopify non connesso"); return; }
-    if (!data.length) { addLog("error","❌ Prima importa i prodotti su Shopify"); return; }
-    addLog("info", `🗂 Sincronizzazione collezioni da categorie WC…`);
+    if (!data.length) { addLog("error","❌ Prima carica i prodotti da WooCommerce"); return; }
+    addLog("info", "🗂 Sincronizzazione collezioni da categorie WC…");
     try {
-      // Raggruppa prodotti Shopify per categoria WC
-      // Recupera gli ID Shopify dei prodotti già importati
-      const checkRes = await fetch(`https://${store.shopify_domain}/admin/api/2024-01/products.json?limit=250&fields=id,title,tags`, {
-        headers: { "X-Shopify-Access-Token": store.shopify_token }
-      });
-      // Usa la nostra API per farlo passare dal proxy
+      // Raggruppa prodotti per categoria
       const collectionsMap = {};
       data.forEach(row => {
-        const flat = flattenWC(row);
         const cats = row.categories || [];
         cats.forEach(cat => {
           if (!collectionsMap[cat.name]) collectionsMap[cat.name] = [];
-          // Usiamo il nome del prodotto per trovarlo su Shopify dopo
-          collectionsMap[cat.name].push({ wc_id: row.id, name: flat.name });
+          collectionsMap[cat.name].push(row.name);
         });
       });
 
-      // Recupera prodotti Shopify per matchare gli ID
-      const shRes = await fetch("/api/shopify", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shopify_domain: store.shopify_domain, shopify_token: store.shopify_token, entity: "get_products" }),
-      });
-
-      // Crea collezioni con i dati che abbiamo
-      const collectionsPayload = Object.entries(collectionsMap).map(([title, products]) => ({
-        title,
-        product_names: products.map(p => p.name),
-      }));
+      const collectionsPayload = Object.entries(collectionsMap).map(([title, product_names]) => ({ title, product_names }));
+      addLog("info", `🗂 ${collectionsPayload.length} categorie trovate…`);
 
       const res = await fetch("/api/shopify-collections", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           shopify_domain: store.shopify_domain,
           shopify_token: store.shopify_token,
           collections: collectionsPayload,
-          wc_products: data,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       json.results.forEach(r => {
         if (r.error) addLog("error", `❌ Collezione "${r.title}": ${r.error}`);
-        else addLog("ok", `✅ Collezione "${r.title}": ${r.added} prodotti`);
+        else addLog("ok", `✅ Collezione "${r.title}": ${r.added} prodotti associati`);
       });
     } catch(e) { addLog("error", `❌ ${e.message}`); }
   };
