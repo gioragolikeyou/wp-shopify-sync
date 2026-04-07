@@ -613,16 +613,6 @@ export default function App() {
       try {
         const payload = buildPayload(entity,row,mapping,metaTypeMap);
 
-        // ── DEDUP PRODOTTI: verifica se esiste già tramite tag wc_product_ID ──
-        if (entity==="products" && row.id) {
-          const checkRes = await fetch("/api/shopify", {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity:"check_product", check_tag:`wc_product_${row.id}`}),
-          });
-          const checkJson = await checkRes.json();
-          if (checkJson.exists) { skipped++; addLog("info",`⏭ Prodotto "${row.name||row.id}" già importato, saltato`); continue; }
-        }
-
         // Per gli ordini: verifica se esiste già tramite tag wc_order_ID
         if (entity==="orders" && row.id) {
           const checkRes = await fetch("/api/shopify", {
