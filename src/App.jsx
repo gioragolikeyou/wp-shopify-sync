@@ -436,6 +436,7 @@ export default function App() {
   const [fetching, setFetching]         = useState(false);
   const [fetchingCats, setFCats]        = useState(false);
   const [pushing, setPushing]           = useState(false);
+  const [previewing, setPreviewing]     = useState(false);
   const [progress, setProgress]         = useState(null);
   const [fetchOpts, setFetchOpts]       = useState({limit:"5",after:"",before:""});
   const abortRef                        = useRef(false);
@@ -561,6 +562,29 @@ export default function App() {
     } catch(e) { addLog("error", `❌ ${e.message}`); }
   };
 
+  const doDeletePreview = async () => {
+    if (!store.shopify_token) { addLog("error","❌ Shopify non connesso"); return; }
+    setPreviewing(true);
+    addLog("info", `👁 Anteprima cancellazione ${entity}…`);
+    try {
+      const res = await fetch("/api/shopify-delete", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity, preview:true }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      if (json.total === 0) {
+        addLog("ok", `✅ Nessun ${entity} trovato con tag di importazione — niente da cancellare`);
+      } else {
+        addLog("warn", `👁 ANTEPRIMA: verrebbero cancellati ${json.total} ${entity}:`);
+        (json.items || []).forEach(item => addLog("info", `   • ${item.label}`));
+        if (json.total > 100) addLog("info", `   … e altri ${json.total - 100} non mostrati`);
+        addLog("warn", `⚠ Premi 🗑 per cancellare davvero, o ignora per annullare`);
+      }
+    } catch(e) { addLog("error", `❌ ${e.message}`); }
+    finally { setPreviewing(false); }
+  };
+
   const doDelete = async () => {
     if (!store.shopify_token) { addLog("error","❌ Shopify non connesso"); return; }
     if (!window.confirm(`⚠️ Sei sicuro di voler cancellare TUTTI i ${entity} da Shopify?\n\nQuesta operazione non è reversibile.`)) return;
@@ -589,6 +613,16 @@ export default function App() {
       try {
         const payload = buildPayload(entity,row,mapping,metaTypeMap);
 
+        // ── DEDUP PRODOTTI: verifica se esiste già tramite tag wc_product_ID ──
+        if (entity==="products" && row.id) {
+          const checkRes = await fetch("/api/shopify", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity:"check_product", check_tag:`wc_product_${row.id}`}),
+          });
+          const checkJson = await checkRes.json();
+          if (checkJson.exists) { skipped++; addLog("info",`⏭ Prodotto "${row.name||row.id}" già importato, saltato`); continue; }
+        }
+
         // Per gli ordini: verifica se esiste già tramite tag wc_order_ID
         if (entity==="orders" && row.id) {
           const checkRes = await fetch("/api/shopify", {
@@ -599,18 +633,29 @@ export default function App() {
           if (checkJson.exists) { skipped++; addLog("info",`⏭ Ordine #${row.id} già importato, saltato`); continue; }
         }
 
-        // ── RETRY su timeout (max 3 tentativi con backoff) ──────────────────
-        let pushed = false;
+        // ── RETRY su timeout: prima di riprovare verifica se il prodotto è già stato creato ──
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
             await shopifyPush({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity, payload});
             ok++;
-            pushed = true;
             break;
           } catch(e) {
             const isTimeout = e.message.toLowerCase().includes("timeout") || e.message.toLowerCase().includes("aborted");
             if (isTimeout && attempt < 3) {
               addLog("warn", `⏳ Timeout "${row.name||row.id}" — tentativo ${attempt}/3, riprovo tra ${attempt*2}s…`);
+              // Verifica se nonostante il timeout il prodotto è stato creato
+              if (entity==="products" && row.id) {
+                const recheckRes = await fetch("/api/shopify", {
+                  method:"POST", headers:{"Content-Type":"application/json"},
+                  body: JSON.stringify({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity:"check_product", check_tag:`wc_product_${row.id}`}),
+                });
+                const recheckJson = await recheckRes.json();
+                if (recheckJson.exists) {
+                  addLog("info", `✓ "${row.name||row.id}" creato nonostante il timeout — skip retry`);
+                  ok++;
+                  break;
+                }
+              }
               await new Promise(r => setTimeout(r, attempt * 2000));
             } else {
               throw e;
@@ -686,6 +731,10 @@ export default function App() {
               </button>
             </>
           )}
+          <button onClick={doDeletePreview} disabled={!store?.shopify_token||previewing}
+            style={{background:C.yellow+"15",color:store?.shopify_token?C.yellow:C.muted,border:`1px solid ${store?.shopify_token?C.yellow+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:store?.shopify_token?"pointer":"not-allowed"}} title={`Anteprima ${entity} da cancellare`}>
+            {previewing?"⏳":"👁"} Anteprima
+          </button>
           <button onClick={doDelete} disabled={!store?.shopify_token}
             style={{background:C.red+"15",color:store?.shopify_token?C.red:C.muted,border:`1px solid ${store?.shopify_token?C.red+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:store?.shopify_token?"pointer":"not-allowed"}} title={`Cancella tutti i ${entity} da Shopify`}>
             🗑

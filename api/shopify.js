@@ -8,7 +8,7 @@ export default async function handler(req, res) {
 
   const domain = shopify_domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
-  // Dedup check per ordini
+  // ── Dedup check per ORDINI ──────────────────────────────────────────────────
   if (entity === "check_order" && check_tag) {
     try {
       const url = `https://${domain}/admin/api/2024-01/orders.json?tag=${encodeURIComponent(check_tag)}&limit=1&status=any`;
@@ -17,8 +17,29 @@ export default async function handler(req, res) {
       });
       const data = await r.json();
       return res.status(200).json({ exists: Array.isArray(data.orders) && data.orders.length > 0 });
-    } catch (err) {
+    } catch {
       return res.status(200).json({ exists: false });
+    }
+  }
+
+  // ── Dedup check per PRODOTTI ────────────────────────────────────────────────
+  // Cerca per tag wc_product_{id} — se esiste restituisce anche l'id Shopify
+  // così possiamo fare PUT invece di POST (aggiornamento invece di duplicato)
+  if (entity === "check_product" && check_tag) {
+    try {
+      const url = `https://${domain}/admin/api/2024-01/products.json?tag=${encodeURIComponent(check_tag)}&limit=1&published_status=any&fields=id,tags,title`;
+      const r = await fetch(url, {
+        headers: { "X-Shopify-Access-Token": shopify_token, "User-Agent": "WP-Shopify-SyncConsole/1.0" },
+      });
+      const data = await r.json();
+      const found = Array.isArray(data.products) && data.products.length > 0;
+      return res.status(200).json({
+        exists: found,
+        shopify_id: found ? data.products[0].id : null,
+        title: found ? data.products[0].title : null,
+      });
+    } catch {
+      return res.status(200).json({ exists: false, shopify_id: null });
     }
   }
 
@@ -28,7 +49,7 @@ export default async function handler(req, res) {
   let method = shopify_id ? "PUT" : "POST";
   let resolvedId = shopify_id;
 
-  // Per i clienti: cerca per email per evitare duplicati
+  // ── Dedup clienti per email ─────────────────────────────────────────────────
   if (entity === "customers" && !shopify_id && payload.email) {
     try {
       const searchUrl = `https://${domain}/admin/api/2024-01/customers/search.json?query=email:${encodeURIComponent(payload.email)}&limit=1`;
@@ -54,7 +75,7 @@ export default async function handler(req, res) {
         "User-Agent": "WP-Shopify-SyncConsole/1.0",
       },
       body: JSON.stringify({ [ENTITY_KEY[entity]]: payload }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(25000),
     });
     const json = await upstream.json();
     if (!upstream.ok) return res.status(upstream.status).json({ error: `Shopify ${upstream.status}`, detail: json?.errors || json });
