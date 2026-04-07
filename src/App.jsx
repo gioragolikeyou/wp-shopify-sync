@@ -58,7 +58,23 @@ function flattenWC(row) {
   const flat = { ...row };
   ["billing","shipping"].forEach(k => { if (row[k]&&typeof row[k]==="object") Object.entries(row[k]).forEach(([sk,sv])=>{flat[`${k}.${sk}`]=sv;}); });
   if (row.meta_data) row.meta_data.forEach(m=>{flat[`meta:${m.key}`]=m.value;});
-  if (Array.isArray(row.categories)) { row.categories.forEach((cat,i)=>{flat[`categories[${i}].id`]=cat.id;flat[`categories[${i}].name`]=cat.name;flat[`categories[${i}].slug`]=cat.slug;}); flat["_categories_names"]=row.categories.map(c=>c.name).join(", "); }
+
+  // ── CATEGORIE: flat per mapping + stringa completa per tag ──
+  if (Array.isArray(row.categories)) {
+    row.categories.forEach((cat,i)=>{
+      flat[`categories[${i}].id`]   = cat.id;
+      flat[`categories[${i}].name`] = cat.name;
+      flat[`categories[${i}].slug`] = cat.slug;
+    });
+    flat["_categories_names"] = row.categories.map(c => c.name).join(", ");
+  }
+
+  // ── TAG WC: array di oggetti → stringa nomi ──
+  // WooCommerce restituisce tags come [{id, name, slug}], non come stringa
+  if (Array.isArray(row.tags)) {
+    flat["tags"] = row.tags.map(t => t.name).filter(Boolean).join(", ");
+  }
+
   if (row.dimensions&&typeof row.dimensions==="object") Object.entries(row.dimensions).forEach(([k,v])=>{flat[`dimensions.${k}`]=v;});
   if (Array.isArray(row.images)) {
     flat["images"] = row.images.map(img=>({src:img.src,alt:img.alt||""}));
@@ -89,34 +105,22 @@ function validateRow(entity, flat, mapping) {
 
 function buildPayload(entity, row, mapping, metaTypeMap) {
   const flat=flattenWC(row);
-  const obj=entity==="products"?{variants:[{}],metafields:[],images:[]}:entity==="orders"?{billing_address:{},line_items:[],metafields:[]}:{addresses:[{}],metafields:[]};
+  const obj=entity==="products"?{variants:[{}],metafields:[],images:[]}:entity==="orders"?{billing_address:{},line_items:[],metafields:{}}:{addresses:[{}],metafields:[]};
 
   // Descrizione: usa description, fallback a short_description
   if (entity==="products") {
     if (!obj.body_html && flat["short_description"]) {
       obj.body_html = flat["short_description"];
     }
-    // Fix prezzo prodotti semplici: se price è 0 o vuoto ma compare_at_price ha valore, inverti
-    const v0 = obj.variants[0];
-    if (v0 && (!v0.price || v0.price === "0" || v0.price === "") && v0.compare_at_price) {
-      v0.price = v0.compare_at_price;
-      delete v0.compare_at_price;
-    }
-    // Abilita monitoraggio scorte per prodotti semplici
-    if (v0 && v0.inventory_quantity !== undefined && v0.inventory_quantity !== null) {
-      v0.inventory_management = "shopify";
-    }
+
     // Prodotti variabili: usa le varianti pre-caricate se disponibili
     if (flat["_variations"] && flat["_variations"].length > 0) {
       const vars = flat["_variations"];
-      // Attributes / options
       const attrNames = [...new Set(vars.flatMap(v => (v.attributes||[]).map(a => a.name)))].slice(0,3);
       if (attrNames.length > 0) {
         obj.options = attrNames.map(name => ({ name }));
         obj.variants = vars.map(v => {
           const attrMap = Object.fromEntries((v.attributes||[]).map(a=>[a.name, a.option]));
-          // Prezzo: se c'è sale_price usa quello come price e regular come compare_at
-          // Se non c'è sale_price usa regular_price come price
           const hasDiscount = v.sale_price && v.sale_price !== "" && v.sale_price !== "0";
           const mainPrice = hasDiscount ? v.sale_price : (v.regular_price || v.price || "0");
           const comparePrice = hasDiscount ? v.regular_price : undefined;
@@ -130,7 +134,6 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
             inventory_quantity: parseInt(v.stock_quantity) || 0,
             inventory_management: (v.manage_stock && v.stock_quantity !== null) ? "shopify" : null,
           };
-          // Rimuovi undefined
           Object.keys(variant).forEach(k => variant[k] === undefined && delete variant[k]);
           return variant;
         });
@@ -141,13 +144,6 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
   // Immagini prodotto
   if (entity==="products" && Array.isArray(flat["images"])) {
     obj.images = flat["images"].map(img=>({src:img.src,alt:img.alt}));
-  }
-
-  // Tag identificativo per prodotti importati (usato per cancellazione selettiva)
-  if (entity==="products" && flat["id"]) {
-    const existingTags = obj.tags ? String(obj.tags) : "";
-    const wcTag = `wc_product_${flat["id"]}`;
-    obj.tags = existingTags ? `${existingTags},${wcTag}` : wcTag;
   }
 
   // Coupon/sconti ordine
@@ -164,7 +160,7 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
     obj.tags = `wc_order_${flat["id"]}`;
   }
 
-  // Line items ordini (richiesti da Shopify)
+  // Line items ordini
   if (entity==="orders") {
     const items = flat["_line_items"];
     if (Array.isArray(items) && items.length > 0) {
@@ -175,7 +171,6 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
         sku: item.sku || "",
       }));
     } else {
-      // Shopify richiede almeno un line item — usa il totale come placeholder
       obj.line_items = [{
         title: "Ordine importato da WooCommerce",
         quantity: 1,
@@ -183,16 +178,66 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
       }];
     }
   }
+
+  // ── MAPPING LOOP ────────────────────────────────────────────────────────────
   Object.entries(mapping).forEach(([wpField,target])=>{
     if (!target) return;
     let val=flat[wpField];
     if (val===undefined||val===null||val==="") return;
     if (target==="financial_status") val=STATUS_MAP[val]||"pending";
     if (target==="accepts_marketing") val=["yes","true","1"].includes(String(val).toLowerCase());
-    if (target.startsWith("meta:")) { const key=target.replace("meta:custom.",""); const type=metaTypeMap?.[target]||"single_line_text_field"; if (type==="number_integer") val=parseInt(val); else if (type==="number_decimal") val=parseFloat(val); obj.metafields.push({namespace:"custom",key,type,value:val}); }
-    else if (target.includes(".")) { const [p,c]=target.split("."); if (p==="variants") obj.variants[0][c]=val; else if (p==="billing_address") obj.billing_address[c]=val; else if (p==="addresses") obj.addresses[0][c]=val; }
+    if (target.startsWith("meta:")) {
+      const key=target.replace("meta:custom.","");
+      const type=metaTypeMap?.[target]||"single_line_text_field";
+      if (type==="number_integer") val=parseInt(val);
+      else if (type==="number_decimal") val=parseFloat(val);
+      obj.metafields.push({namespace:"custom",key,type,value:val});
+    }
+    else if (target.includes(".")) {
+      const [p,c]=target.split(".");
+      if (p==="variants") obj.variants[0][c]=val;
+      else if (p==="billing_address") obj.billing_address[c]=val;
+      else if (p==="addresses") obj.addresses[0][c]=val;
+    }
     else { obj[target]=val; }
   });
+  // ── FINE MAPPING LOOP ───────────────────────────────────────────────────────
+
+  // ── TAGS CONSOLIDATI (dopo il mapping, così non sovrascriviamo) ─────────────
+  // Struttura finale tag prodotto:
+  //   [tag WC originali] + [tutte le categorie WC] + [wc_product_{id}]
+  if (entity === "products") {
+    const tagParts = [];
+
+    // 1. Tag WC originali (già flattati in flattenWC come stringa)
+    if (obj.tags) tagParts.push(String(obj.tags).trim());
+
+    // 2. Tutte le categorie WC come tag (non solo la prima)
+    if (flat["_categories_names"]) {
+      flat["_categories_names"].split(", ").forEach(catName => {
+        const normalized = catName.trim();
+        if (normalized && !tagParts.includes(normalized)) tagParts.push(normalized);
+      });
+    }
+
+    // 3. Tag identificativo importazione (per cancellazione selettiva)
+    if (flat["id"]) tagParts.push(`wc_product_${flat["id"]}`);
+
+    obj.tags = tagParts.filter(Boolean).join(", ");
+
+    // ── FIX PREZZO: se price è 0/vuoto ma compare_at_price ha valore, inverti ──
+    const v0 = obj.variants[0];
+    if (v0 && (!v0.price || v0.price === "0" || v0.price === "") && v0.compare_at_price) {
+      v0.price = v0.compare_at_price;
+      delete v0.compare_at_price;
+    }
+
+    // ── SCORTE prodotti semplici (DOPO il mapping, ora inventory_quantity è valorizzato) ──
+    if (v0 && v0.inventory_quantity !== undefined && v0.inventory_quantity !== null && v0.inventory_quantity !== "") {
+      v0.inventory_management = "shopify";
+    }
+  }
+
   return obj;
 }
 
@@ -213,18 +258,14 @@ function AppSettingsModal({ settings, onSave, onClose }) {
       <div onClick={e=>e.stopPropagation()} style={{background:C.surface,border:`1px solid ${C.purple}44`,borderRadius:10,padding:24,width:500}}>
         <div style={{fontFamily:"'IBM Plex Sans',sans-serif",fontWeight:700,fontSize:15,color:C.purple,marginBottom:6}}>⚙️ Impostazioni App</div>
         <div style={{color:C.muted,fontSize:12,marginBottom:18}}>Configura le credenziali OAuth Shopify per tutti gli store. Salvate solo nel browser.</div>
-
         <div style={lbl}>Shopify Client ID</div>
         <input style={inp} value={clientId} onChange={e=>setClientId(e.target.value)} placeholder="2379492e27d60b3cca02782e3845dc43" autoFocus/>
-
         <div style={{...lbl,marginTop:12}}>Shopify Client Secret</div>
         <input style={inp} type="password" value={clientSecret} onChange={e=>setClientSecret(e.target.value)} placeholder="shpss_xxxx"/>
         <div style={{color:C.muted,fontSize:10,marginTop:4}}>⚠️ Salvato solo nel tuo browser, mai nel codice o su server</div>
-
         <div style={{...lbl,marginTop:12}}>URL App (redirect OAuth)</div>
         <input style={inp} value={appUrl} onChange={e=>setAppUrl(e.target.value)} placeholder="https://wp-shopify-sync.vercel.app"/>
         <div style={{color:C.muted,fontSize:10,marginTop:4}}>Deve corrispondere all'URL configurato nella Dev Dashboard Shopify</div>
-
         <div style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:6,padding:12,marginTop:16,fontSize:11}}>
           <div style={{color:C.yellow,fontWeight:600,marginBottom:6}}>📋 Dove trovare questi valori:</div>
           <div style={{color:C.muted,lineHeight:1.8}}>
@@ -233,7 +274,6 @@ function AppSettingsModal({ settings, onSave, onClose }) {
             3. Copia <span style={{color:C.field}}>ID client</span> e <span style={{color:C.field}}>Segreto</span>
           </div>
         </div>
-
         <div style={{display:"flex",gap:10,marginTop:20}}>
           <button onClick={()=>onSave({clientId,clientSecret,appUrl})}
             style={{background:C.purple+"22",color:C.purple,border:`1px solid ${C.purple}44`,borderRadius:6,padding:"8px 20px",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600,flex:1}}>
@@ -283,7 +323,6 @@ function StoreModal({ store, appSettings, onSave, onClose, onLog }) {
         <div style={sec}>Shopify</div>
         <div style={lbl}>Store Domain</div>
         <input style={inp} value={shopify_domain} onChange={e=>setShopifyDomain(e.target.value)} placeholder="mio-negozio.myshopify.com"/>
-
         <div style={{...lbl,marginTop:10}}>Access Token Shopify</div>
         <input style={inp} type="password" value={shopify_token} onChange={e=>setShopifyToken(e.target.value)} placeholder="shpat_xxxx"/>
         <div style={{color:C.muted,fontSize:10,marginTop:4}}>Incolla il token dalla Dev Dashboard di Shopify Partners</div>
@@ -293,7 +332,6 @@ function StoreModal({ store, appSettings, onSave, onClose, onLog }) {
             <button onClick={()=>setShopifyToken("")} style={{marginLeft:"auto",background:"none",color:C.red,border:"none",cursor:"pointer",fontSize:11}}>Rimuovi</button>
           </div>
         )}
-
         <div style={{display:"flex",gap:10,marginTop:20}}>
           <button onClick={()=>onSave({...store,name,wp_url,wp_key,wp_secret,shopify_domain,shopify_token})}
             style={{background:C.green+"22",color:C.green,border:`1px solid ${C.green}44`,borderRadius:6,padding:"8px 20px",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600,flex:1}}>✓ Salva</button>
@@ -402,7 +440,6 @@ export default function App() {
   const [fetchOpts, setFetchOpts]       = useState({limit:"5",after:"",before:""});
   const abortRef                        = useRef(false);
 
-  // Persisti stores
   useEffect(() => { LS.set("stores", stores); }, [stores]);
   useEffect(() => { LS.set("app_settings", appSettings); }, [appSettings]);
 
@@ -413,7 +450,7 @@ export default function App() {
     const shop      = params.get("shop");
     const token     = params.get("token");
     const oauthErr  = params.get("shopify_error");
-    if (oauthErr) { addLog("error",`❌ OAuth: ${decodeURIComponent(oauthErr)}`); window.history.replaceState({},""," /"); return; }
+    if (oauthErr) { addLog("error",`❌ OAuth: ${decodeURIComponent(oauthErr)}`); window.history.replaceState({},"","/"); return; }
     if (connected&&shop&&token) {
       const pending = sessionStorage.getItem("pending_store");
       sessionStorage.removeItem("pending_store");
@@ -500,7 +537,6 @@ export default function App() {
     if (!data.length) { addLog("error","❌ Prima carica i prodotti da WooCommerce"); return; }
     addLog("info", "🗂 Sincronizzazione collezioni da categorie WC…");
     try {
-      // Raggruppa prodotti per categoria
       const collectionsMap = {};
       data.forEach(row => {
         const cats = row.categories || [];
@@ -509,18 +545,12 @@ export default function App() {
           collectionsMap[cat.name].push(row.name);
         });
       });
-
       const collectionsPayload = Object.entries(collectionsMap).map(([title, product_names]) => ({ title, product_names }));
       addLog("info", `🗂 ${collectionsPayload.length} categorie trovate…`);
-
       const res = await fetch("/api/shopify-collections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          shopify_domain: store.shopify_domain,
-          shopify_token: store.shopify_token,
-          collections: collectionsPayload,
-        }),
+        body: JSON.stringify({ shopify_domain: store.shopify_domain, shopify_token: store.shopify_token, collections: collectionsPayload }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
@@ -533,9 +563,7 @@ export default function App() {
 
   const doDelete = async () => {
     if (!store.shopify_token) { addLog("error","❌ Shopify non connesso"); return; }
-    if (!window.confirm(`⚠️ Sei sicuro di voler cancellare TUTTI i ${entity} da Shopify?
-
-Questa operazione non è reversibile.`)) return;
+    if (!window.confirm(`⚠️ Sei sicuro di voler cancellare TUTTI i ${entity} da Shopify?\n\nQuesta operazione non è reversibile.`)) return;
     addLog("info", `🗑 Cancellazione ${entity} da ${store.shopify_domain}…`);
     try {
       const res = await fetch("/api/shopify-delete", {
@@ -556,9 +584,11 @@ Questa operazione non è reversibile.`)) return;
     addLog("info",`⬆ Importo ${toImport.length} ${entity}…`);
     let ok=0,fail=0,skipped=0;
     for (const {row} of toImport) {
+      if (abortRef.current) { addLog("warn","⚠ Importazione interrotta"); break; }
       setProgress({loaded:ok+fail+skipped,total:toImport.length,label:"Importazione in Shopify…"});
       try {
         const payload = buildPayload(entity,row,mapping,metaTypeMap);
+
         // Per gli ordini: verifica se esiste già tramite tag wc_order_ID
         if (entity==="orders" && row.id) {
           const checkRes = await fetch("/api/shopify", {
@@ -568,8 +598,26 @@ Questa operazione non è reversibile.`)) return;
           const checkJson = await checkRes.json();
           if (checkJson.exists) { skipped++; addLog("info",`⏭ Ordine #${row.id} già importato, saltato`); continue; }
         }
-        await shopifyPush({shopify_domain:store.shopify_domain,shopify_token:store.shopify_token,entity,payload}); ok++;
-      } catch(e){fail++;addLog("error",`❌ ${e.message}`);}
+
+        // ── RETRY su timeout (max 3 tentativi con backoff) ──────────────────
+        let pushed = false;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            await shopifyPush({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity, payload});
+            ok++;
+            pushed = true;
+            break;
+          } catch(e) {
+            const isTimeout = e.message.toLowerCase().includes("timeout") || e.message.toLowerCase().includes("aborted");
+            if (isTimeout && attempt < 3) {
+              addLog("warn", `⏳ Timeout "${row.name||row.id}" — tentativo ${attempt}/3, riprovo tra ${attempt*2}s…`);
+              await new Promise(r => setTimeout(r, attempt * 2000));
+            } else {
+              throw e;
+            }
+          }
+        }
+      } catch(e){fail++;addLog("error",`❌ "${row.name||row.id}": ${e.message}`);}
       await new Promise(r=>setTimeout(r,400));
     }
     setProgress(null);
@@ -594,7 +642,6 @@ Questa operazione non è reversibile.`)) return;
           <div style={{color:C.muted,fontSize:10}}>Multi-store · OAuth · Paginazione</div>
         </div>
 
-        {/* Store tabs */}
         <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
           {stores.map((s,i)=>(
             <button key={s.id} onClick={()=>{setActive(i);setSimIndex(0);setSyncLogs([]);setSelCat(null);}}
@@ -607,7 +654,6 @@ Questa operazione non è reversibile.`)) return;
         </div>
 
         <div style={{marginLeft:"auto",display:"flex",gap:7,alignItems:"center"}}>
-          {/* Impostazioni App */}
           <button onClick={()=>setShowAppSettings(true)}
             style={{background:appSettings.clientId?C.purple+"15":"none",color:appSettings.clientId?C.purple:C.muted,border:`1px solid ${appSettings.clientId?C.purple+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:"pointer"}} title="Impostazioni OAuth App">
             {appSettings.clientId?"⚙️ App configurata":"⚙️ Configura App"}
@@ -616,7 +662,7 @@ Questa operazione non è reversibile.`)) return;
             style={{background:fetching?C.surface2:C.accent+"22",color:fetching?C.muted:C.accent,border:`1px solid ${fetching?C.border:C.accent+"44"}`,borderRadius:5,padding:"5px 12px",fontSize:12,fontFamily:"inherit",cursor:fetching?"not-allowed":"pointer"}}>
             {fetching?"⏳ Fetching…":"⬇ Da WooCommerce"}
           </button>
-          {fetching&&<button onClick={()=>{abortRef.current=true;}} style={{background:C.red+"22",color:C.red,border:`1px solid ${C.red}44`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>✕</button>}
+          {(fetching||pushing)&&<button onClick={()=>{abortRef.current=true;}} style={{background:C.red+"22",color:C.red,border:`1px solid ${C.red}44`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>✕ Stop</button>}
           <button onClick={doPush} disabled={pushing||!data.length}
             style={{background:pushing||!data.length?C.surface2:C.green+"22",color:pushing||!data.length?C.muted:C.green,border:`1px solid ${pushing||!data.length?C.border:C.green+"44"}`,borderRadius:5,padding:"5px 12px",fontSize:12,fontFamily:"inherit",cursor:pushing||!data.length?"not-allowed":"pointer"}}>
             {pushing?"⏳ Pushing…":"⬆ Su Shopify"}
@@ -793,13 +839,13 @@ Questa operazione non è reversibile.`)) return;
                     <div>
                       <div style={{color:C.muted,fontSize:10,textTransform:"uppercase",letterSpacing:1,marginBottom:7}}>WooCommerce Input</div>
                       <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:12,maxHeight:440,overflow:"auto"}}>
-                        {Object.entries(flattenWC(row)).map(([k,v])=><div key={k} style={{display:"flex",gap:7,marginBottom:3}}><span style={{color:k.startsWith("categories")?C.teal:C.field,minWidth:155,flexShrink:0,fontSize:11}}>{k}:</span><span style={{color:v?C.text:C.muted,fontSize:11,wordBreak:"break-all",fontStyle:v?"normal":"italic"}}>{typeof v==="object"?JSON.stringify(v).slice(0,60):String(v||"null")}</span></div>)}
+                        {Object.entries(flattenWC(row)).map(([k,v])=><div key={k} style={{display:"flex",gap:7,marginBottom:3}}><span style={{color:k.startsWith("categories")?C.teal:k==="tags"?C.orange:C.field,minWidth:155,flexShrink:0,fontSize:11}}>{k}:</span><span style={{color:v?C.text:C.muted,fontSize:11,wordBreak:"break-all",fontStyle:v?"normal":"italic"}}>{typeof v==="object"?JSON.stringify(v).slice(0,60):String(v||"null")}</span></div>)}
                       </div>
                     </div>
                     <div>
                       <div style={{color:C.muted,fontSize:10,textTransform:"uppercase",letterSpacing:1,marginBottom:7,display:"flex",gap:7,alignItems:"center"}}>Shopify Payload {vr?.ok?<Badge label="✓ valido" color={C.green}/>:<Badge label="⚠ errori" color={C.red}/>}</div>
                       <div style={{background:"#0a1a0a",border:`1px solid ${C.green}33`,borderRadius:7,padding:12,maxHeight:440,overflow:"auto"}}>
-                        <pre style={{margin:0,fontSize:12,lineHeight:1.65}}>{JSON.stringify(payload,null,2).split("\n").map((line,idx)=>{let c=C.text;if(line.match(/"(namespace|key|type|value)":/))c=C.meta;else if(line.match(/"product_type":/))c=C.teal;else if(line.match(/"(title|email|name)":/))c=ec.color;else if(line.match(/"(sku|price|inventory)":/))c=C.field;return<span key={idx} style={{color:c,display:"block"}}>{line}</span>;})}</pre>
+                        <pre style={{margin:0,fontSize:12,lineHeight:1.65}}>{JSON.stringify(payload,null,2).split("\n").map((line,idx)=>{let c=C.text;if(line.match(/"(namespace|key|type|value)":/))c=C.meta;else if(line.match(/"product_type":/))c=C.teal;else if(line.match(/"tags":/))c=C.orange;else if(line.match(/"(title|email|name)":/))c=ec.color;else if(line.match(/"(sku|price|inventory)":/))c=C.field;return<span key={idx} style={{color:c,display:"block"}}>{line}</span>;})}</pre>
                       </div>
                     </div>
                   </div>
