@@ -139,6 +139,13 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
     obj.images = flat["images"].map(img=>({src:img.src,alt:img.alt}));
   }
 
+  // Tag identificativo per prodotti importati (usato per cancellazione selettiva)
+  if (entity==="products" && flat["id"]) {
+    const existingTags = obj.tags ? String(obj.tags) : "";
+    const wcTag = `wc_product_${flat["id"]}`;
+    obj.tags = existingTags ? `${existingTags},${wcTag}` : wcTag;
+  }
+
   // Coupon/sconti ordine
   if (entity==="orders" && Array.isArray(row.coupon_lines) && row.coupon_lines.length > 0) {
     obj.discount_codes = row.coupon_lines.map(c => ({
@@ -611,10 +618,23 @@ Questa operazione non è reversibile.`)) return;
             {pushing?"⏳ Pushing…":"⬆ Su Shopify"}
           </button>
           {entity==="products" && (
-            <button onClick={syncCollections} disabled={!store?.shopify_token||!data.length}
-              style={{background:C.teal+"15",color:store?.shopify_token&&data.length?C.teal:C.muted,border:`1px solid ${store?.shopify_token&&data.length?C.teal+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:store?.shopify_token&&data.length?"pointer":"not-allowed"}} title="Crea collezioni da categorie WC">
-              🗂
-            </button>
+            <>
+              <button onClick={syncCollections} disabled={!store?.shopify_token||!data.length}
+                style={{background:C.teal+"15",color:store?.shopify_token&&data.length?C.teal:C.muted,border:`1px solid ${store?.shopify_token&&data.length?C.teal+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:store?.shopify_token&&data.length?"pointer":"not-allowed"}} title="Crea collezioni da categorie WC">
+                🗂 Crea Collezioni
+              </button>
+              <button onClick={()=>{
+                if(!store?.shopify_token) return;
+                if(!window.confirm("Cancellare TUTTE le collezioni custom da Shopify?")) return;
+                addLog("info","🗑 Cancellazione collezioni…");
+                fetch("/api/shopify-delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({shopify_domain:store.shopify_domain,shopify_token:store.shopify_token,entity:"collections"})})
+                  .then(r=>r.json()).then(j=>addLog("ok",`✅ Cancellate ${j.deleted} collezioni`))
+                  .catch(e=>addLog("error",`❌ ${e.message}`));
+              }} disabled={!store?.shopify_token}
+                style={{background:C.red+"15",color:store?.shopify_token?C.red:C.muted,border:`1px solid ${store?.shopify_token?C.red+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:store?.shopify_token?"pointer":"not-allowed"}} title="Cancella tutte le collezioni da Shopify">
+                🗑 Collezioni
+              </button>
+            </>
           )}
           <button onClick={doDelete} disabled={!store?.shopify_token}
             style={{background:C.red+"15",color:store?.shopify_token?C.red:C.muted,border:`1px solid ${store?.shopify_token?C.red+"44":C.border}`,borderRadius:5,padding:"5px 10px",fontSize:12,fontFamily:"inherit",cursor:store?.shopify_token?"pointer":"not-allowed"}} title={`Cancella tutti i ${entity} da Shopify`}>

@@ -10,35 +10,53 @@ export default async function handler(req, res) {
 
   try {
     let ids = [];
-    // products non supporta status=any
-    const statusParam = entity === "products" ? "published_status=any" : "status=any";
-    let url  = `${apiBase}/${entity}.json?limit=250&${statusParam}`;
-    while (url) {
-      const r    = await fetch(url, { headers });
-      const data = await r.json();
-      ids = [...ids, ...(data[entity] || []).map(i => i.id)];
-      const link = r.headers.get("link") || "";
-      const next = link.match(/page_info=([^&>]+)[^>]*>;\s*rel="next"/);
-      url = next ? `${apiBase}/${entity}.json?limit=250&${statusParam}&page_info=${next[1]}` : null;
+    let url;
+
+    if (entity === "products") {
+      // Cancella SOLO prodotti con tag wc_product_* (importati dalla console)
+      url = `${apiBase}/products.json?limit=250&published_status=any&fields=id,tags`;
+      while (url) {
+        const r = await fetch(url, { headers });
+        const data = await r.json();
+        const filtered = (data.products || [])
+          .filter(p => p.tags && p.tags.includes("wc_product_"))
+          .map(p => p.id);
+        ids = [...ids, ...filtered];
+        const link = r.headers.get("link") || "";
+        const next = link.match(/page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+        url = next ? `${apiBase}/products.json?limit=250&published_status=any&fields=id,tags&page_info=${next[1]}` : null;
+      }
+    } else if (entity === "orders") {
+      url = `${apiBase}/orders.json?limit=250&status=any`;
+      while (url) {
+        const r = await fetch(url, { headers });
+        const data = await r.json();
+        ids = [...ids, ...(data.orders || []).map(i => i.id)];
+        const link = r.headers.get("link") || "";
+        const next = link.match(/page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+        url = next ? `${apiBase}/orders.json?limit=250&status=any&page_info=${next[1]}` : null;
+      }
+    } else if (entity === "customers") {
+      url = `${apiBase}/customers.json?limit=250`;
+      while (url) {
+        const r = await fetch(url, { headers });
+        const data = await r.json();
+        ids = [...ids, ...(data.customers || []).map(i => i.id)];
+        const link = r.headers.get("link") || "";
+        const next = link.match(/page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+        url = next ? `${apiBase}/customers.json?limit=250&page_info=${next[1]}` : null;
+      }
     }
 
     let deleted = 0, failed = 0;
     for (const id of ids) {
       try {
-        // Per gli ordini: prima chiudi poi cancella
         if (entity === "orders") {
           await fetch(`${apiBase}/orders/${id}/close.json`, { method:"POST", headers, body:"{}" });
         }
         const r = await fetch(`${apiBase}/${entity}/${id}.json`, { method:"DELETE", headers });
         if (r.ok || r.status===200||r.status===204) deleted++;
-        else { 
-          const err = await r.json();
-          // Se non cancellabile (ordine completato), archivia
-          if (entity==="orders") {
-            const arc = await fetch(`${apiBase}/orders/${id}/close.json`, {method:"POST",headers,body:"{}"});
-            if (arc.ok) deleted++; else failed++;
-          } else failed++;
-        }
+        else failed++;
       } catch { failed++; }
       await new Promise(r => setTimeout(r, 250));
     }
