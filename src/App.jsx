@@ -70,6 +70,10 @@ function flattenWC(row) {
   if (Array.isArray(row._variations)) {
     flat["_variations"] = row._variations;
   }
+  // Se description è null usa short_description
+  if (!flat["description"] && flat["short_description"]) {
+    flat["description"] = flat["short_description"];
+  }
   return flat;
 }
 
@@ -92,6 +96,12 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
     if (!obj.body_html && flat["short_description"]) {
       obj.body_html = flat["short_description"];
     }
+    // Fix prezzo prodotti semplici: se price è 0 o vuoto ma compare_at_price ha valore, inverti
+    const v0 = obj.variants[0];
+    if (v0 && (!v0.price || v0.price === "0" || v0.price === "") && v0.compare_at_price) {
+      v0.price = v0.compare_at_price;
+      delete v0.compare_at_price;
+    }
     // Prodotti variabili: usa le varianti pre-caricate se disponibili
     if (flat["_variations"] && flat["_variations"].length > 0) {
       const vars = flat["_variations"];
@@ -101,15 +111,20 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
         obj.options = attrNames.map(name => ({ name }));
         obj.variants = vars.map(v => {
           const attrMap = Object.fromEntries((v.attributes||[]).map(a=>[a.name, a.option]));
+          // Prezzo: se c'è sale_price usa quello come price e regular come compare_at
+          // Se non c'è sale_price usa regular_price come price
+          const hasDiscount = v.sale_price && v.sale_price !== "" && v.sale_price !== "0";
+          const mainPrice = hasDiscount ? v.sale_price : (v.regular_price || v.price || "0");
+          const comparePrice = hasDiscount ? v.regular_price : undefined;
           const variant = {
             option1: attrMap[attrNames[0]] || "",
             option2: attrNames[1] ? (attrMap[attrNames[1]] || "") : undefined,
             option3: attrNames[2] ? (attrMap[attrNames[2]] || "") : undefined,
-            price: v.sale_price || v.regular_price || v.price || "0",
-            compare_at_price: v.sale_price && v.regular_price ? v.regular_price : undefined,
+            price: mainPrice,
+            compare_at_price: comparePrice,
             sku: v.sku || "",
             inventory_quantity: parseInt(v.stock_quantity) || 0,
-            inventory_management: v.manage_stock ? "shopify" : null,
+            inventory_management: (v.manage_stock && v.stock_quantity !== null) ? "shopify" : null,
           };
           // Rimuovi undefined
           Object.keys(variant).forEach(k => variant[k] === undefined && delete variant[k]);
