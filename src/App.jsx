@@ -219,11 +219,20 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
       const richVal = JSON.stringify({type:"root",children:paragraphs.length?paragraphs:[{type:"paragraph",children:[{type:"text",value:""}]}]});
       obj.metafields.push({namespace:"custom",key:"custom_description",type:"rich_text_field",value:richVal});
     } else if (target.startsWith("meta:")) {
+      // Salta product_media_second_image — è file_reference, non mappabile via URL
+      if (target === "meta:custom.product_media_second_image") return;
       const key=target.replace("meta:custom.","");
       const type=metaTypeMap?.[target]||"single_line_text_field";
       if (type==="number_integer") val=parseInt(val);
       else if (type==="number_decimal") val=parseFloat(val);
-      obj.metafields.push({namespace:"custom",key,type,value:val});
+      // Campi lista: split per virgola → array JSON
+      const listFields = ["filter_categorie","filter_collezioni","filter_materiale"];
+      if (listFields.includes(key)) {
+        const items = String(val).split(",").map(s=>s.trim()).filter(Boolean);
+        obj.metafields.push({namespace:"custom",key,type:"list.single_line_text_field",value:JSON.stringify(items)});
+      } else {
+        obj.metafields.push({namespace:"custom",key,type,value:val});
+      }
     }
     else if (target.includes(".")) {
       const [p,c]=target.split(".");
