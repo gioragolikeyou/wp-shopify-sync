@@ -40,13 +40,13 @@ const LS = {
 const newStore = (id) => ({ id, name:`Store ${id}`, wp_url:"", wp_key:"", wp_secret:"", shopify_domain:"", shopify_token:"" });
 
 const DEFAULT_MAPPING = {
-  products: { id:"", name:"title", description:"body_html", short_description:"", tags:"tags", sku:"variants.sku", regular_price:"variants.price", sale_price:"variants.compare_at_price", stock_quantity:"variants.inventory_quantity", "categories[0].name":"product_type", "categories[0].slug":"meta:custom.categoria_slug", weight:"meta:custom.weight", "dimensions.length":"meta:custom.dim_length", "dimensions.width":"meta:custom.dim_width", "dimensions.height":"meta:custom.dim_height", "meta:_yoast_wpseo_title":"seo.title", "meta:_yoast_wpseo_metadesc":"seo.description", "_yoast_title":"seo.title", "_yoast_description":"seo.description", "description":"meta:custom.custom_description", "attribute:pa_collezioni":"meta:custom.filter_collezioni" },
+  products: { id:"", name:"title", description:"body_html", short_description:"", tags:"tags", sku:"variants.sku", regular_price:"variants.price", sale_price:"variants.compare_at_price", stock_quantity:"variants.inventory_quantity", "categories[0].name":"product_type", "categories[0].slug":"meta:custom.categoria_slug", weight:"meta:custom.weight", "dimensions.length":"meta:custom.dim_length", "dimensions.width":"meta:custom.dim_width", "dimensions.height":"meta:custom.dim_height", "meta:_yoast_wpseo_title":"seo.title", "meta:_yoast_wpseo_metadesc":"seo.description", "_yoast_title":"seo.title", "_yoast_description":"seo.description", "description":"meta:custom.custom_description", "attribute:pa_collezioni":"meta:custom.filter_collezioni", "_categories_names":"meta:custom.filter_categorie", "attribute:pa_materiale":"meta:custom.filter_materiale", "_second_image_url":"meta:custom.product_media_second_image" },
   orders: { id:"name", date_created:"created_at", "billing.email":"email", status:"financial_status", total:"total_price", shipping_total:"shipping_price", payment_method:"payment_gateway", customer_note:"note", "billing.first_name":"billing_address.first_name", "billing.last_name":"billing_address.last_name", "billing.address_1":"billing_address.address1", "billing.city":"billing_address.city", "billing.postcode":"billing_address.zip", "billing.country":"billing_address.country_code", "billing.phone":"billing_address.phone" },
   customers: { id:"", email:"email", first_name:"first_name", last_name:"last_name", "billing.phone":"phone", "billing.address_1":"addresses.address1", "billing.city":"addresses.city", "billing.postcode":"addresses.zip", "billing.country":"addresses.country_code", date_created:"meta:custom.data_registrazione", orders_count:"meta:custom.num_ordini", total_spent:"meta:custom.totale_speso" },
 };
 
 const SHOPIFY_TARGETS = {
-  products:  ["","title","body_html","vendor","product_type","tags","variants.sku","variants.price","variants.compare_at_price","variants.inventory_quantity","meta:custom.categoria","meta:custom.categoria_slug","meta:custom.weight","meta:custom.dim_length","meta:custom.dim_width","meta:custom.dim_height","seo.title","seo.description","meta:custom.custom_description","meta:custom.filter_collezioni"],
+  products:  ["","title","body_html","vendor","product_type","tags","variants.sku","variants.price","variants.compare_at_price","variants.inventory_quantity","meta:custom.categoria","meta:custom.categoria_slug","meta:custom.weight","meta:custom.dim_length","meta:custom.dim_width","meta:custom.dim_height","seo.title","seo.description","meta:custom.custom_description","meta:custom.filter_collezioni","meta:custom.filter_categorie","meta:custom.filter_materiale","meta:custom.product_media_second_image","meta:custom.related_products","meta:custom.product_accordions"],
   orders:    ["","name","created_at","email","financial_status","fulfillment_status","total_price","shipping_price","payment_gateway","note","billing_address.first_name","billing_address.last_name","billing_address.address1","billing_address.city","billing_address.zip","billing_address.country_code","billing_address.phone"],
   customers: ["","email","first_name","last_name","phone","note","accepts_marketing","addresses.address1","addresses.city","addresses.zip","addresses.country_code","meta:custom.data_registrazione","meta:custom.num_ordini","meta:custom.totale_speso","meta:custom.tipo_cliente"],
 };
@@ -79,6 +79,7 @@ function flattenWC(row) {
   if (Array.isArray(row.images)) {
     flat["images"] = row.images.map(img=>({src:img.src,alt:img.alt||""}));
     flat["_images_count"] = row.images.length;
+    if (row.images.length > 1) flat["_second_image_url"] = row.images[1].src;
   }
   if (Array.isArray(row.line_items)) {
     flat["_line_items"] = row.line_items;
@@ -608,12 +609,17 @@ export default function App() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       if (json.total === 0) {
-        addLog("ok", `✅ Nessun ${entity} trovato con tag di importazione — niente da cancellare`);
+        addLog("ok", `✅ Nessun ${entity} trovato — niente da cancellare`);
       } else {
-        addLog("warn", `👁 ANTEPRIMA: verrebbero cancellati ${json.total} ${entity}:`);
+        if (json.warning) {
+          addLog("error", `⚠️ ${json.warning}`);
+          addLog("warn", `👁 TUTTI i prodotti Shopify (${json.total} totali — nessuno ha il tag wc_product_*):`);
+        } else {
+          addLog("warn", `👁 ANTEPRIMA: verrebbero cancellati ${json.total} ${entity} (solo quelli importati dalla console):`);
+        }
         (json.items || []).forEach(item => addLog("info", `   • ${item.label}`));
         if (json.total > 100) addLog("info", `   … e altri ${json.total - 100} non mostrati`);
-        addLog("warn", `⚠ Premi 🗑 per cancellare davvero, o ignora per annullare`);
+        if (!json.warning) addLog("warn", `⚠ Premi 🗑 per cancellare davvero, o ignora per annullare`);
       }
     } catch(e) { addLog("error", `❌ ${e.message}`); }
     finally { setPreviewing(false); }

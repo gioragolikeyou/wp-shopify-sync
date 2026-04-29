@@ -13,17 +13,25 @@ export default async function handler(req, res) {
     let url;
 
     if (entity === "products") {
-      // Cancella SOLO prodotti con tag wc_product_* (importati dalla console)
+      // Recupera tutti i prodotti con titolo e tag
+      let allProducts = [];
       url = `${apiBase}/products.json?limit=250&published_status=any&fields=id,title,tags`;
       while (url) {
         const r = await fetch(url, { headers });
         const data = await r.json();
-        (data.products || [])
-          .filter(p => p.tags && p.tags.includes("wc_product_"))
-          .forEach(p => items.push({ id: p.id, label: p.title || String(p.id) }));
+        (data.products || []).forEach(p => allProducts.push(p));
         const link = r.headers.get("link") || "";
         const next = link.match(/page_info=([^&>]+)[^>]*>;\s*rel="next"/);
         url = next ? `${apiBase}/products.json?limit=250&published_status=any&fields=id,title,tags&page_info=${next[1]}` : null;
+      }
+      // Filtra quelli con tag wc_product_* (importati dalla console)
+      const tagged = allProducts.filter(p => p.tags && p.tags.includes("wc_product_"));
+      if (tagged.length > 0) {
+        // Usa solo i prodotti taggati
+        tagged.forEach(p => items.push({ id: p.id, label: `🏷 ${p.title || String(p.id)}` }));
+      } else {
+        // Nessun tag trovato: mostra TUTTI i prodotti come avviso
+        allProducts.forEach(p => items.push({ id: p.id, label: `⚠ ${p.title || String(p.id)} (no tag)` }));
       }
     } else if (entity === "orders") {
       url = `${apiBase}/orders.json?limit=250&status=any&fields=id,name,tags`;
@@ -59,10 +67,15 @@ export default async function handler(req, res) {
 
     // ── MODALITÀ PREVIEW: lista senza cancellare ─────────────────────────────
     if (preview) {
+      const hasTagged = items.some(i => i.label.startsWith("🏷"));
+      const allUntagged = items.length > 0 && items.every(i => i.label.startsWith("⚠"));
       return res.status(200).json({
         preview: true,
         total: items.length,
-        items: items.slice(0, 100), // max 100 titoli in preview
+        items: items.slice(0, 100),
+        warning: allUntagged
+          ? "Nessun prodotto ha il tag wc_product_* — questi sono TUTTI i prodotti Shopify. Cancellare manualmente o reimportare con il tool aggiornato."
+          : null,
       });
     }
 
