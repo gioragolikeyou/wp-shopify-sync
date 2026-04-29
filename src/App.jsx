@@ -210,6 +210,21 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
     } else if (target==="seo.description") {
       const seoVal = String(val || flat["short_description"] || "").replace(/<[^>]*>/g,"").slice(0, 320);
       if (seoVal) obj.metafields.push({ namespace:"global", key:"description_tag", type:"single_line_text_field", value:seoVal });
+    } else if (target==="meta:custom.custom_description") {
+      // Shopify richiede rich_text_field come JSON strutturato
+      const htmlToRichText = (html) => {
+        const plain = String(html || "").replace(/<br\s*\/?>/gi, "
+").replace(/<\/p>/gi, "
+").replace(/<[^>]*>/g, "").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&#8217;/g,"'").replace(/&#8211;/g,"–").trim();
+        const paragraphs = plain.split(/
++/).filter(p => p.trim()).map(p => ({
+          type: "paragraph",
+          children: [{ type: "text", value: p.trim() }]
+        }));
+        return JSON.stringify({ type: "root", children: paragraphs.length ? paragraphs : [{ type:"paragraph", children:[{type:"text",value:""}] }] });
+      };
+      const richVal = htmlToRichText(val);
+      obj.metafields.push({ namespace:"custom", key:"custom_description", type:"rich_text_field", value: richVal });
     } else if (target.startsWith("meta:")) {
       const key=target.replace("meta:custom.","");
       const type=metaTypeMap?.[target]||"single_line_text_field";
