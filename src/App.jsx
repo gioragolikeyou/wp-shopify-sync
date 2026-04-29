@@ -674,8 +674,9 @@ export default function App() {
         // ── RETRY su timeout: prima di riprovare verifica se il prodotto è già stato creato ──
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
-            await shopifyPush({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity, payload});
+            const result = await shopifyPush({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity, payload});
             ok++;
+            if (result.warning) addLog("warn", `⚠ "${row.name||row.id}": ${result.warning}`);
             break;
           } catch(e) {
             const isTimeout = e.message.toLowerCase().includes("timeout") || e.message.toLowerCase().includes("aborted");

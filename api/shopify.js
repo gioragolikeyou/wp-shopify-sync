@@ -23,8 +23,6 @@ export default async function handler(req, res) {
   }
 
   // ── Dedup check per PRODOTTI ────────────────────────────────────────────────
-  // Cerca per tag wc_product_{id} — se esiste restituisce anche l'id Shopify
-  // così possiamo fare PUT invece di POST (aggiornamento invece di duplicato)
   if (entity === "check_product" && check_tag) {
     try {
       const url = `https://${domain}/admin/api/2024-01/products.json?tag=${encodeURIComponent(check_tag)}&limit=1&published_status=any&fields=id,tags,title`;
@@ -66,18 +64,45 @@ export default async function handler(req, res) {
     ? `https://${domain}/admin/api/2024-01/${entity}/${resolvedId}.json`
     : `https://${domain}/admin/api/2024-01/${entity}.json`;
 
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Shopify-Access-Token": shopify_token,
+    "User-Agent": "WP-Shopify-SyncConsole/1.0",
+  };
+
   try {
+    // ── Tentativo 1: payload completo con metafields ─────────────────────────
     const upstream = await fetch(path, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": shopify_token,
-        "User-Agent": "WP-Shopify-SyncConsole/1.0",
-      },
+      headers,
       body: JSON.stringify({ [ENTITY_KEY[entity]]: payload }),
       signal: AbortSignal.timeout(25000),
     });
     const json = await upstream.json();
+
+    // ── Se 422 e prodotto: ritenta senza metafields problematici ─────────────
+    if (upstream.status === 422 && entity === "products" && Array.isArray(payload.metafields) && payload.metafields.length > 0) {
+      const errorStr = JSON.stringify(json?.errors || "");
+      // Se l'errore riguarda i tipi dei metafields, ritenta senza metafields
+      if (errorStr.includes("consistent with the definition")) {
+        const payloadNoMeta = { ...payload, metafields: [] };
+        const upstream2 = await fetch(path, {
+          method,
+          headers,
+          body: JSON.stringify({ [ENTITY_KEY[entity]]: payloadNoMeta }),
+          signal: AbortSignal.timeout(25000),
+        });
+        const json2 = await upstream2.json();
+        if (!upstream2.ok) return res.status(upstream2.status).json({ error: `Shopify ${upstream2.status}`, detail: json2?.errors || json2 });
+        return res.status(200).json({
+          success: true,
+          id: json2[ENTITY_KEY[entity]]?.id,
+          result: json2[ENTITY_KEY[entity]],
+          warning: "Prodotto importato senza metafields — errore tipo: " + errorStr.slice(0, 200),
+        });
+      }
+    }
+
     if (!upstream.ok) return res.status(upstream.status).json({ error: `Shopify ${upstream.status}`, detail: json?.errors || json });
     return res.status(200).json({ success: true, id: json[ENTITY_KEY[entity]]?.id, result: json[ENTITY_KEY[entity]] });
   } catch (err) {
