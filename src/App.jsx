@@ -715,6 +715,13 @@ export default function App() {
     }
     setProgress(null);
     addLog((fail>0||skipped>0)?"warn":"ok",`${fail>0?"⚠":"✅"} ${ok} ok, ${skipped} saltati, ${fail} falliti`);
+
+    // ── Auto-sync collezioni dopo il push prodotti ──────────────────────────
+    if (entity === "products" && ok > 0) {
+      addLog("info", "🗂 Associazione automatica collezioni…");
+      await syncCollections();
+    }
+
     setPushing(false);
   };
 
