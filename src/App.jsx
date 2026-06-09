@@ -12,13 +12,21 @@ async function wcFetchPage({ wp_url, wp_key, wp_secret, entity, page, category, 
 }
 
 async function wcFetchVariations({ wp_url, wp_key, wp_secret, product_id }) {
-  const res = await fetch("/api/wc", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ wp_url, wp_key, wp_secret, entity: "product_variations", product_id, per_page: 100, page: 1 }),
-  });
-  const json = await res.json();
-  if (!res.ok) return [];
-  return json.data || [];
+  let allVars = [], page = 1;
+  // Loop su più pagine (alcuni prodotti hanno 20+ varianti)
+  while (true) {
+    const res = await fetch("/api/wc", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wp_url, wp_key, wp_secret, entity: "product_variations", product_id, per_page: 100, page }),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.data || json.data.length === 0) break;
+    allVars = [...allVars, ...json.data];
+    if (json.data.length < 100) break; // ultima pagina
+    page++;
+    await new Promise(r => setTimeout(r, 300));
+  }
+  return allVars;
 }
 
 async function shopifyPush({ shopify_domain, shopify_token, entity, payload }) {
@@ -565,7 +573,7 @@ export default function App() {
         if (variableProducts.length > 0) {
           addLog("info", `🔄 Carico varianti per ${variableProducts.length} prodotti variabili…`);
           const result = [...final];
-          const BATCH = 3;
+          const BATCH = 1;
           for (let i = 0; i < result.length; i++) {
             if (abortRef.current) break;
             const batch = [];
@@ -589,7 +597,7 @@ export default function App() {
               }
             }));
             i += BATCH - 1;
-            await new Promise(r => setTimeout(r, 300));
+            await new Promise(r => setTimeout(r, 500));
           }
           final = result;
         }
