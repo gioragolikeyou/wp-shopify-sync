@@ -12,11 +12,10 @@ async function wcFetchPage({ wp_url, wp_key, wp_secret, entity, page, category, 
 }
 
 async function wcFetchVariations({ wp_url, wp_key, wp_secret, product_id }) {
-  // Fetch diretto dal browser (bypassa IP Vercel, usa IP utente)
+  // Fetch diretto dal browser con query params (no CORS issue con Authorization header)
   const base = wp_url.replace(/\/$/, "");
-  const basicAuth = "Basic " + btoa(`${wp_key}:${wp_secret}`);
-  const url = `${base}/wp-json/wc/v3/products/${product_id}/variations?per_page=100&page=1`;
-  const res = await fetch(url, { headers: { "Authorization": basicAuth } });
+  const url = `${base}/wp-json/wc/v3/products/${product_id}/variations?consumer_key=${encodeURIComponent(wp_key)}&consumer_secret=${encodeURIComponent(wp_secret)}&per_page=100&page=1`;
+  const res = await fetch(url);
   const raw = await res.text();
   if (!res.ok) throw new Error(`WC ${res.status}: ${raw.slice(0,120)}`);
   let data;
