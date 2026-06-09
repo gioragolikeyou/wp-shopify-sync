@@ -16,8 +16,8 @@ export default async function handler(req, res) {
     page: String(page),
   });
 
-  // orderby solo per products e orders
-  if (entity !== "customers" && entity !== "products/categories") {
+  // orderby solo per products e orders (NON per varianti o categorie)
+  if (entity === "products" || entity === "orders") {
     params.set("orderby", "date");
     params.set("order", "desc");
   }
