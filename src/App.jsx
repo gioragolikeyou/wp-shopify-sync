@@ -12,14 +12,16 @@ async function wcFetchPage({ wp_url, wp_key, wp_secret, entity, page, category, 
 }
 
 async function wcFetchVariations({ wp_url, wp_key, wp_secret, product_id }) {
-  const res = await fetch("/api/wc", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ wp_url, wp_key, wp_secret, entity: "product_variations", product_id, per_page: 100, page: 1 }),
+  // Fetch diretto dal browser (bypassa IP Vercel, usa IP utente)
+  const base = wp_url.replace(/\/$/, "");
+  const basicAuth = "Basic " + btoa(`${wp_key}:${wp_secret}`);
+  const url = `${base}/wp-json/wc/v3/products/${product_id}/variations?per_page=100&page=1`;
+  const res = await fetch(url, {
+    headers: { "Authorization": basicAuth },
   });
-  const json = await res.json();
-  if (!res.ok) throw new Error(`WC ${res.status}: ${json.error || JSON.stringify(json).slice(0,100)}`);
-  if (!json.data) throw new Error(`Risposta inattesa: ${JSON.stringify(json).slice(0,100)}`);
-  return json.data;
+  if (!res.ok) throw new Error(`WC ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
 }
 
 async function shopifyPush({ shopify_domain, shopify_token, entity, payload }) {
@@ -560,35 +562,25 @@ export default function App() {
       } while (page<=totalPages);
       let final=isFinite(limit)?allRows.slice(0,limit):allRows;
 
-      // Per i prodotti variabili: carica le varianti server-side in blocchi da 20
+      // Per i prodotti variabili: fetch diretto dal browser (bypassa rate limit Vercel)
       if (entity==="products") {
         const variableProducts = final.filter(p => p.type === "variable");
         if (variableProducts.length > 0) {
           addLog("info", `🔄 Carico varianti per ${variableProducts.length} prodotti variabili…`);
           const result = [...final];
-          const CHUNK = 2;
-          for (let i = 0; i < variableProducts.length; i += CHUNK) {
+          for (let i = 0; i < result.length; i++) {
             if (abortRef.current) break;
-            const chunk = variableProducts.slice(i, i + CHUNK);
-            const ids = chunk.map(p => p.id);
-            setProgress({loaded:i, total:variableProducts.length, label:`Varianti ${i+1}-${Math.min(i+CHUNK, variableProducts.length)} di ${variableProducts.length}…`});
+            const p = result[i];
+            if (p.type !== "variable") continue;
+            setProgress({loaded:variableProducts.indexOf(p), total:variableProducts.length, label:`Varianti "${p.name}"…`});
             try {
-              const res = await fetch("/api/wc-variations-bulk", {
-                method: "POST", headers: {"Content-Type":"application/json"},
-                body: JSON.stringify({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_ids: ids }),
-              });
-              const json = await res.json();
-              if (res.ok && json.results) {
-                for (const p of chunk) {
-                  const vars = json.results[p.id] || [];
-                  addLog("info", `🔀 "${p.name}": ${vars.length} varianti`);
-                  const idx = result.findIndex(r => r.id === p.id);
-                  if (idx >= 0) result[idx] = { ...p, _variations: vars };
-                }
-              }
+              const vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
+              addLog("info", `🔀 "${p.name}": ${vars.length} varianti`);
+              result[i] = { ...p, _variations: vars };
             } catch(e) {
-              addLog("error", `❌ Bulk varianti chunk ${i}: ${e.message}`);
+              addLog("error", `❌ Varianti "${p.name}": ${e?.message||e}`);
             }
+            await new Promise(r => setTimeout(r, 150));
           }
           setProgress(null);
           final = result;
