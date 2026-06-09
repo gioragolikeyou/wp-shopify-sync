@@ -566,7 +566,7 @@ export default function App() {
         if (variableProducts.length > 0) {
           addLog("info", `🔄 Carico varianti per ${variableProducts.length} prodotti variabili…`);
           const result = [...final];
-          const CHUNK = 5;
+          const CHUNK = 2;
           for (let i = 0; i < variableProducts.length; i += CHUNK) {
             if (abortRef.current) break;
             const chunk = variableProducts.slice(i, i + CHUNK);

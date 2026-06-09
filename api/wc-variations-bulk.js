@@ -1,6 +1,4 @@
 // api/wc-variations-bulk.js
-export const maxDuration = 60; // Vercel Pro: 60s, Hobby: 10s (ignorato su hobby)
-
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const { wp_url, wp_key, wp_secret, product_ids } = req.body;
@@ -16,14 +14,13 @@ export default async function handler(req, res) {
   for (const product_id of product_ids) {
     try {
       const url = `${base}/wp-json/wc/v3/products/${product_id}/variations?per_page=100&page=1`;
-      const r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+      const r = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
       if (!r.ok) { results[product_id] = []; continue; }
       const data = await r.json();
       results[product_id] = Array.isArray(data) ? data : [];
     } catch {
       results[product_id] = [];
     }
-    await new Promise(r => setTimeout(r, 200));
   }
 
   return res.status(200).json({ results });
