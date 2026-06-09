@@ -16,12 +16,13 @@ async function wcFetchVariations({ wp_url, wp_key, wp_secret, product_id }) {
   const base = wp_url.replace(/\/$/, "");
   const basicAuth = "Basic " + btoa(`${wp_key}:${wp_secret}`);
   const url = `${base}/wp-json/wc/v3/products/${product_id}/variations?per_page=100&page=1`;
-  const res = await fetch(url, {
-    headers: { "Authorization": basicAuth },
-  });
-  if (!res.ok) throw new Error(`WC ${res.status}`);
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
+  const res = await fetch(url, { headers: { "Authorization": basicAuth } });
+  const raw = await res.text();
+  if (!res.ok) throw new Error(`WC ${res.status}: ${raw.slice(0,120)}`);
+  let data;
+  try { data = JSON.parse(raw); } catch(e) { throw new Error(`JSON parse error: ${raw.slice(0,120)}`); }
+  if (!Array.isArray(data)) throw new Error(`Non array: ${raw.slice(0,120)}`);
+  return data;
 }
 
 async function shopifyPush({ shopify_domain, shopify_token, entity, payload }) {
