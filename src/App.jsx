@@ -573,31 +573,24 @@ export default function App() {
         if (variableProducts.length > 0) {
           addLog("info", `🔄 Carico varianti per ${variableProducts.length} prodotti variabili…`);
           const result = [...final];
-          const BATCH = 1;
+          // Loop sequenziale — un prodotto alla volta
           for (let i = 0; i < result.length; i++) {
             if (abortRef.current) break;
-            const batch = [];
-            for (let j = i; j < Math.min(i + BATCH, result.length); j++) {
-              if (result[j].type === "variable") batch.push(j);
-            }
-            if (batch.length === 0) { i += BATCH - 1; continue; }
-            await Promise.all(batch.map(async idx => {
-              const p = result[idx];
-              try {
-                let vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
-                // Retry se ritorna 0 varianti per un prodotto variabile
-                if (vars.length === 0) {
-                  await new Promise(r => setTimeout(r, 1500));
-                  vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
-                }
-                addLog("info", `🔀 "${p.name}": ${vars.length} varianti`);
-                result[idx] = { ...p, _variations: vars };
-              } catch(e) {
-                addLog("error", `❌ Varianti "${p.name}": ${e.message}`);
+            const p = result[i];
+            if (p.type !== "variable") continue;
+            try {
+              let vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
+              if (vars.length === 0) {
+                // Retry dopo 2s se vuoto
+                await new Promise(r => setTimeout(r, 2000));
+                vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
               }
-            }));
-            i += BATCH - 1;
-            await new Promise(r => setTimeout(r, 500));
+              addLog("info", `🔀 "${p.name}": ${vars.length} varianti`);
+              result[i] = { ...p, _variations: vars };
+            } catch(e) {
+              addLog("error", `❌ Varianti "${p.name}": ${e.message}`);
+            }
+            await new Promise(r => setTimeout(r, 400));
           }
           final = result;
         }
