@@ -143,7 +143,8 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
         obj.variants = vars.map(v => {
           const attrMap = Object.fromEntries((v.attributes||[]).map(a=>[a.name, a.option]));
           const hasDiscount = v.sale_price && v.sale_price !== "" && v.sale_price !== "0";
-          const mainPrice = hasDiscount ? v.sale_price : (v.regular_price || v.price || "0");
+          // Fallback: usa il price della variante, poi regular_price, poi il price del prodotto padre (flat["price"])
+          const mainPrice = hasDiscount ? v.sale_price : (v.regular_price || v.price || flat["price"] || "0");
           const comparePrice = hasDiscount ? v.regular_price : undefined;
           const variant = {
             option1: attrMap[attrNames[0]] || "",
@@ -558,23 +559,34 @@ export default function App() {
       } while (page<=totalPages);
       let final=isFinite(limit)?allRows.slice(0,limit):allRows;
 
-      // Per i prodotti variabili: carica le varianti
+      // Per i prodotti variabili: carica le varianti in batch da 3
       if (entity==="products") {
         const variableProducts = final.filter(p => p.type === "variable");
         if (variableProducts.length > 0) {
           addLog("info", `🔄 Carico varianti per ${variableProducts.length} prodotti variabili…`);
-          const withVariations = await Promise.all(final.map(async p => {
-            if (p.type !== "variable") return p;
-            try {
-              const vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
-              addLog("info", `🔀 Prodotto "${p.name}": ${vars.length} varianti`);
-              return { ...p, _variations: vars };
-            } catch(e) {
-              addLog("error", `❌ Varianti "${p.name}": ${e.message}`);
-              return p;
+          const result = [...final];
+          const BATCH = 3;
+          for (let i = 0; i < result.length; i++) {
+            if (abortRef.current) break;
+            const batch = [];
+            for (let j = i; j < Math.min(i + BATCH, result.length); j++) {
+              if (result[j].type === "variable") batch.push(j);
             }
-          }));
-          final = withVariations;
+            if (batch.length === 0) { i += BATCH - 1; continue; }
+            await Promise.all(batch.map(async idx => {
+              const p = result[idx];
+              try {
+                const vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
+                addLog("info", `🔀 "${p.name}": ${vars.length} varianti`);
+                result[idx] = { ...p, _variations: vars };
+              } catch(e) {
+                addLog("error", `❌ Varianti "${p.name}": ${e.message}`);
+              }
+            }));
+            i += BATCH - 1;
+            await new Promise(r => setTimeout(r, 300));
+          }
+          final = result;
         }
       }
 
@@ -670,6 +682,20 @@ export default function App() {
       try {
         const payload = buildPayload(entity,row,mapping,metaTypeMap);
 
+        // ── UPSERT PRODOTTI: se esiste già fa PUT (aggiorna), altrimenti POST (crea) ──
+        let existingShopifyId = null;
+        if (entity==="products" && row.id) {
+          const checkRes = await fetch("/api/shopify", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity:"check_product", check_tag:`wc_product_${row.id}`}),
+          });
+          const checkJson = await checkRes.json();
+          if (checkJson.exists && checkJson.shopify_id) {
+            existingShopifyId = checkJson.shopify_id;
+            addLog("info", `🔄 "${row.name||row.id}" già presente — aggiorno (PUT)`);
+          }
+        }
+
         // Per gli ordini: verifica se esiste già tramite tag wc_order_ID
         if (entity==="orders" && row.id) {
           const checkRes = await fetch("/api/shopify", {
@@ -683,7 +709,7 @@ export default function App() {
         // ── RETRY su timeout: prima di riprovare verifica se il prodotto è già stato creato ──
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
-            const result = await shopifyPush({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity, payload});
+            const result = await shopifyPush({shopify_domain:store.shopify_domain, shopify_token:store.shopify_token, entity, payload, shopify_id: existingShopifyId || undefined});
             ok++;
             if (result.warning) addLog("warn", `⚠ "${row.name||row.id}": ${result.warning}`);
             break;
