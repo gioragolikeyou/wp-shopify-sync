@@ -598,7 +598,7 @@ export default function App() {
       setLiveData(d=>({...d,[dataKey]:final}));
       addLog("ok",`✅ ${final.length}${total>final.length?` di ${total}`:""} ${entity} caricati`);
       setSimIndex(0);setSubtab(0);
-    } catch(e){addLog("error",`❌ ${e.message}`);}
+    } catch(e){addLog("error",`❌ ${e?.message || JSON.stringify(e)}`);}
     finally{setFetching(false);setProgress(null);}
   };
 
