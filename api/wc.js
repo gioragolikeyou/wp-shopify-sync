@@ -9,14 +9,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: `Entità non valida: ${entity}` });
 
   const base = wp_url.replace(/\/$/, "");
+
+  // Basic Auth header (più affidabile dei query params su HTTPS)
+  const basicAuth = "Basic " + Buffer.from(`${wp_key}:${wp_secret}`).toString("base64");
+
   const params = new URLSearchParams({
-    consumer_key: wp_key,
-    consumer_secret: wp_secret,
     per_page: String(Math.min(parseInt(per_page) || 100, 100)),
     page: String(page),
   });
 
-  // orderby solo per products e orders (NON per varianti o categorie)
+  // orderby solo per products e orders
   if (entity === "products" || entity === "orders") {
     params.set("orderby", "date");
     params.set("order", "desc");
@@ -28,7 +30,10 @@ export default async function handler(req, res) {
     if (!product_id) return res.status(400).json({ error: "product_id obbligatorio" });
     const varUrl = `${base}/wp-json/wc/v3/products/${product_id}/variations?${params.toString()}`;
     try {
-      const upstream = await fetch(varUrl, { headers: { "User-Agent": "WP-Shopify-SyncConsole/1.0" }, signal: AbortSignal.timeout(15000) });
+      const upstream = await fetch(varUrl, {
+        headers: { "Authorization": basicAuth, "User-Agent": "WP-Shopify-SyncConsole/1.0" },
+        signal: AbortSignal.timeout(15000)
+      });
       if (!upstream.ok) { const b = await upstream.text(); return res.status(upstream.status).json({ error: `WC ${upstream.status}`, detail: b.slice(0,500) }); }
       const data = await upstream.json();
       return res.status(200).json({ data, total: data.length, totalPages: 1, page: 1 });
@@ -42,7 +47,7 @@ export default async function handler(req, res) {
   const url = `${base}/wp-json/wc/v3/${entity}?${params.toString()}`;
   try {
     const upstream = await fetch(url, {
-      headers: { "User-Agent": "WP-Shopify-SyncConsole/1.0" },
+      headers: { "Authorization": basicAuth, "User-Agent": "WP-Shopify-SyncConsole/1.0" },
       signal: AbortSignal.timeout(20000),
     });
     if (!upstream.ok) {
