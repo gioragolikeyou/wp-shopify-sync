@@ -8,5 +8,10 @@
       "source": "/index.html",
       "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
     }
-  ]
+  ],
+  "functions": {
+    "api/wc-variations-bulk.js": { "maxDuration": 60 },
+    "api/shopify.js": { "maxDuration": 30 },
+    "api/shopify-delete.js": { "maxDuration": 60 }
+  }
 }
