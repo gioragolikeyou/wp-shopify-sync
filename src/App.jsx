@@ -576,7 +576,12 @@ export default function App() {
             await Promise.all(batch.map(async idx => {
               const p = result[idx];
               try {
-                const vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
+                let vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
+                // Retry se ritorna 0 varianti per un prodotto variabile
+                if (vars.length === 0) {
+                  await new Promise(r => setTimeout(r, 1500));
+                  vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
+                }
                 addLog("info", `🔀 "${p.name}": ${vars.length} varianti`);
                 result[idx] = { ...p, _variations: vars };
               } catch(e) {
