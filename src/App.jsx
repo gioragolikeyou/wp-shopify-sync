@@ -12,21 +12,14 @@ async function wcFetchPage({ wp_url, wp_key, wp_secret, entity, page, category, 
 }
 
 async function wcFetchVariations({ wp_url, wp_key, wp_secret, product_id }) {
-  let allVars = [], page = 1;
-  // Loop su più pagine (alcuni prodotti hanno 20+ varianti)
-  while (true) {
-    const res = await fetch("/api/wc", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wp_url, wp_key, wp_secret, entity: "product_variations", product_id, per_page: 100, page }),
-    });
-    const json = await res.json();
-    if (!res.ok || !json.data || json.data.length === 0) break;
-    allVars = [...allVars, ...json.data];
-    if (json.data.length < 100) break; // ultima pagina
-    page++;
-    await new Promise(r => setTimeout(r, 300));
-  }
-  return allVars;
+  const res = await fetch("/api/wc", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ wp_url, wp_key, wp_secret, entity: "product_variations", product_id, per_page: 100, page: 1 }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(`WC ${res.status}: ${json.error || JSON.stringify(json).slice(0,100)}`);
+  if (!json.data) throw new Error(`Risposta inattesa: ${JSON.stringify(json).slice(0,100)}`);
+  return json.data;
 }
 
 async function shopifyPush({ shopify_domain, shopify_token, entity, payload }) {
@@ -567,31 +560,37 @@ export default function App() {
       } while (page<=totalPages);
       let final=isFinite(limit)?allRows.slice(0,limit):allRows;
 
-      // Per i prodotti variabili: carica le varianti in batch da 3
+      // Per i prodotti variabili: carica le varianti server-side in blocchi da 20
       if (entity==="products") {
         const variableProducts = final.filter(p => p.type === "variable");
         if (variableProducts.length > 0) {
           addLog("info", `🔄 Carico varianti per ${variableProducts.length} prodotti variabili…`);
           const result = [...final];
-          // Loop sequenziale — un prodotto alla volta
-          for (let i = 0; i < result.length; i++) {
+          const CHUNK = 20;
+          for (let i = 0; i < variableProducts.length; i += CHUNK) {
             if (abortRef.current) break;
-            const p = result[i];
-            if (p.type !== "variable") continue;
+            const chunk = variableProducts.slice(i, i + CHUNK);
+            const ids = chunk.map(p => p.id);
+            setProgress({loaded:i, total:variableProducts.length, label:`Varianti ${i+1}-${Math.min(i+CHUNK, variableProducts.length)} di ${variableProducts.length}…`});
             try {
-              let vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
-              if (vars.length === 0) {
-                // Retry dopo 2s se vuoto
-                await new Promise(r => setTimeout(r, 2000));
-                vars = await wcFetchVariations({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_id: p.id });
+              const res = await fetch("/api/wc-variations-bulk", {
+                method: "POST", headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({ wp_url:store.wp_url, wp_key:store.wp_key, wp_secret:store.wp_secret, product_ids: ids }),
+              });
+              const json = await res.json();
+              if (res.ok && json.results) {
+                for (const p of chunk) {
+                  const vars = json.results[p.id] || [];
+                  addLog("info", `🔀 "${p.name}": ${vars.length} varianti`);
+                  const idx = result.findIndex(r => r.id === p.id);
+                  if (idx >= 0) result[idx] = { ...p, _variations: vars };
+                }
               }
-              addLog("info", `🔀 "${p.name}": ${vars.length} varianti`);
-              result[i] = { ...p, _variations: vars };
             } catch(e) {
-              addLog("error", `❌ Varianti "${p.name}": ${e.message}`);
+              addLog("error", `❌ Bulk varianti chunk ${i}: ${e.message}`);
             }
-            await new Promise(r => setTimeout(r, 400));
           }
+          setProgress(null);
           final = result;
         }
       }
