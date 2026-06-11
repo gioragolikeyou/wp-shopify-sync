@@ -129,7 +129,7 @@ function validateRow(entity, flat, mapping) {
 
 function buildPayload(entity, row, mapping, metaTypeMap) {
   const flat=flattenWC(row);
-  const obj=entity==="products"?{variants:[{}],metafields:[],images:[]}:entity==="orders"?{billing_address:{},line_items:[],metafields:{}}:{addresses:[{}],metafields:[]};
+  const obj=entity==="products"?{variants:[{}],metafields:[],images:[]}:entity==="orders"?{billing_address:{},line_items:[],metafields:[]}:{addresses:[{}],metafields:[]};
 
   // Descrizione: usa description, fallback a short_description
   if (entity==="products") {
