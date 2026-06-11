@@ -183,6 +183,9 @@ function buildPayload(entity, row, mapping, metaTypeMap) {
   // Tag con ID ordine WC per evitare duplicati
   if (entity==="orders" && flat["id"]) {
     obj.tags = `wc_order_${flat["id"]}`;
+    // Disabilita email automatiche a clienti
+    obj.send_receipt = false;
+    obj.send_fulfillment_receipt = false;
   }
 
   // Line items ordini
